@@ -60,7 +60,6 @@ const offerSchema = new mongoose.Schema({
 
 // Index for better query performance
 offerSchema.index({ active: 1, startDate: 1, endDate: 1 });
-offerSchema.index({ code: 1 });
 
 // Virtual for checking if offer is currently valid
 offerSchema.virtual('isValid').get(function() {
