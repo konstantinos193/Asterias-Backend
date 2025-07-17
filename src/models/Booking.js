@@ -41,6 +41,11 @@ const bookingSchema = new mongoose.Schema({
     specialRequests: {
       type: String,
       default: ''
+    },
+    language: {
+      type: String,
+      enum: ['el', 'en', 'de'],
+      default: 'en'
     }
   },
   checkIn: {
