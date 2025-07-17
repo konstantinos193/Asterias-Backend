@@ -8,6 +8,378 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Get comprehensive analytics/reports (admin only)
+router.get('/analytics', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { period = '30', startDate, endDate } = req.query;
+    
+    // Calculate date range
+    let start, end;
+    if (startDate && endDate) {
+      start = new Date(startDate);
+      end = new Date(endDate);
+    } else {
+      end = new Date();
+      start = new Date();
+      start.setDate(end.getDate() - parseInt(period));
+    }
+
+    // Booking Statistics
+    const bookingStats = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalBookings: { $sum: 1 },
+          confirmedBookings: {
+            $sum: { $cond: [{ $eq: ['$bookingStatus', 'CONFIRMED'] }, 1, 0] }
+          },
+          cancelledBookings: {
+            $sum: { $cond: [{ $eq: ['$bookingStatus', 'CANCELLED'] }, 1, 0] }
+          },
+          checkedInBookings: {
+            $sum: { $cond: [{ $eq: ['$bookingStatus', 'CHECKED_IN'] }, 1, 0] }
+          },
+          checkedOutBookings: {
+            $sum: { $cond: [{ $eq: ['$bookingStatus', 'CHECKED_OUT'] }, 1, 0] }
+          },
+          totalRevenue: {
+            $sum: { $cond: [{ $eq: ['$paymentStatus', 'PAID'] }, '$totalAmount', 0] }
+          },
+          averageBookingValue: { $avg: '$totalAmount' },
+          totalGuests: { $sum: { $add: ['$adults', '$children'] } },
+          totalNights: {
+            $sum: {
+              $divide: [
+                { $subtract: ['$checkOut', '$checkIn'] },
+                1000 * 60 * 60 * 24
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    // Booking trends by day
+    const bookingTrends = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            date: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$createdAt'
+              }
+            }
+          },
+          count: { $sum: 1 },
+          revenue: {
+            $sum: { $cond: [{ $eq: ['$paymentStatus', 'PAID'] }, '$totalAmount', 0] }
+          }
+        }
+      },
+      { $sort: { '_id.date': 1 } }
+    ]);
+
+    // Room type performance
+    const roomPerformance = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end },
+          paymentStatus: 'PAID'
+        }
+      },
+      {
+        $lookup: {
+          from: 'rooms',
+          localField: 'roomId',
+          foreignField: '_id',
+          as: 'room'
+        }
+      },
+      { $unwind: '$room' },
+      {
+        $group: {
+          _id: '$room.name',
+          bookings: { $sum: 1 },
+          revenue: { $sum: '$totalAmount' },
+          averageRate: { $avg: '$totalAmount' },
+          totalNights: {
+            $sum: {
+              $divide: [
+                { $subtract: ['$checkOut', '$checkIn'] },
+                1000 * 60 * 60 * 24
+              ]
+            }
+          }
+        }
+      },
+      { $sort: { revenue: -1 } }
+    ]);
+
+    // Lead time analysis (days between booking and check-in)
+    const leadTimeAnalysis = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end }
+        }
+      },
+      {
+        $project: {
+          leadTime: {
+            $divide: [
+              { $subtract: ['$checkIn', '$createdAt'] },
+              1000 * 60 * 60 * 24
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          averageLeadTime: { $avg: '$leadTime' },
+          minLeadTime: { $min: '$leadTime' },
+          maxLeadTime: { $max: '$leadTime' }
+        }
+      }
+    ]);
+
+    // Monthly occupancy rates
+    const occupancyData = await Booking.aggregate([
+      {
+        $match: {
+          checkIn: { $gte: start },
+          checkOut: { $lte: end },
+          bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN', 'CHECKED_OUT'] }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: '$checkIn' },
+            month: { $month: '$checkIn' }
+          },
+          totalNights: {
+            $sum: {
+              $divide: [
+                { $subtract: ['$checkOut', '$checkIn'] },
+                1000 * 60 * 60 * 24
+              ]
+            }
+          }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1 } }
+    ]);
+
+    // Get total available rooms for occupancy calculation
+    const totalRooms = await Room.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalRooms: { $sum: '$totalRooms' }
+        }
+      }
+    ]);
+
+    // Guest demographics
+    const guestDemographics = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalAdults: { $sum: '$adults' },
+          totalChildren: { $sum: '$children' },
+          averageGroupSize: { $avg: { $add: ['$adults', '$children'] } },
+          familyBookings: {
+            $sum: { $cond: [{ $gt: ['$children', 0] }, 1, 0] }
+          },
+          coupleBookings: {
+            $sum: { $cond: [{ $and: [{ $eq: ['$adults', 2] }, { $eq: ['$children', 0] }] }, 1, 0] }
+          },
+          soloBookings: {
+            $sum: { $cond: [{ $and: [{ $eq: ['$adults', 1] }, { $eq: ['$children', 0] }] }, 1, 0] }
+          }
+        }
+      }
+    ]);
+
+    // Cancellation analysis
+    const cancellationAnalysis = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end }
+        }
+      },
+      {
+        $group: {
+          _id: '$bookingStatus',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Calculate cancellation rate
+    const totalBookingsCount = cancellationAnalysis.reduce((sum, item) => sum + item.count, 0);
+    const cancelledCount = cancellationAnalysis.find(item => item._id === 'CANCELLED')?.count || 0;
+    const cancellationRate = totalBookingsCount > 0 ? Math.round((cancelledCount / totalBookingsCount) * 100) : 0;
+
+    // Average daily rate (ADR)
+    const adrData = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end },
+          paymentStatus: 'PAID'
+        }
+      },
+      {
+        $project: {
+          dailyRate: {
+            $divide: [
+              '$totalAmount',
+              {
+                $divide: [
+                  { $subtract: ['$checkOut', '$checkIn'] },
+                  1000 * 60 * 60 * 24
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          averageDailyRate: { $avg: '$dailyRate' }
+        }
+      }
+    ]);
+
+    res.json({
+      dateRange: { start, end },
+      totalRooms: totalRooms[0]?.totalRooms || 0,
+      bookingStatistics: bookingStats[0] || {},
+      bookingTrends,
+      roomPerformance,
+      leadTimeAnalysis: leadTimeAnalysis[0] || {},
+      occupancyData,
+      guestDemographics: guestDemographics[0] || {},
+      cancellationRate,
+      averageDailyRate: adrData[0]?.averageDailyRate || 0
+    });
+  } catch (error) {
+    console.error('Analytics error:', error);
+    res.status(500).json({ error: 'Failed to get analytics data' });
+  }
+});
+
+// Get revenue reports (admin only)
+router.get('/revenue-reports', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { period = '12' } = req.query; // Default to 12 months
+    
+    const end = new Date();
+    const start = new Date();
+    start.setMonth(end.getMonth() - parseInt(period));
+
+    // Monthly revenue breakdown
+    const monthlyRevenue = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end },
+          paymentStatus: 'PAID'
+        }
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: '$createdAt' },
+            month: { $month: '$createdAt' }
+          },
+          revenue: { $sum: '$totalAmount' },
+          bookings: { $sum: 1 },
+          averageBookingValue: { $avg: '$totalAmount' }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1 } }
+    ]);
+
+    // Revenue by room type
+    const revenueByRoom = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end },
+          paymentStatus: 'PAID'
+        }
+      },
+      {
+        $lookup: {
+          from: 'rooms',
+          localField: 'roomId',
+          foreignField: '_id',
+          as: 'room'
+        }
+      },
+      { $unwind: '$room' },
+      {
+        $group: {
+          _id: '$room.name',
+          revenue: { $sum: '$totalAmount' },
+          bookings: { $sum: 1 },
+          percentage: { $sum: '$totalAmount' }
+        }
+      }
+    ]);
+
+    // Calculate percentages
+    const totalRevenue = revenueByRoom.reduce((sum, item) => sum + item.revenue, 0);
+    revenueByRoom.forEach(room => {
+      room.percentage = totalRevenue > 0 ? Math.round((room.revenue / totalRevenue) * 100) : 0;
+    });
+
+    // Payment method breakdown
+    const paymentMethods = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end },
+          paymentStatus: 'PAID'
+        }
+      },
+      {
+        $group: {
+          _id: '$paymentMethod',
+          revenue: { $sum: '$totalAmount' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    res.json({
+      monthlyRevenue,
+      revenueByRoom,
+      paymentMethods,
+      totalRevenue,
+      period: parseInt(period)
+    });
+  } catch (error) {
+    console.error('Revenue reports error:', error);
+    res.status(500).json({ error: 'Failed to get revenue reports' });
+  }
+});
+
 // Get dashboard overview (admin only)
 router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
   try {
