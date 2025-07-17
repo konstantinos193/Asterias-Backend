@@ -5,6 +5,7 @@ const Room = require('../models/Room');
 const { authenticateToken, requireAdmin, optionalAuth } = require('../middleware/auth');
 const bookingcomService = require('../services/bookingcom.service');
 const requireApiKey = require('../middleware/apiKey');
+const { sendBookingConfirmation, sendNewBookingAlert } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -94,6 +95,32 @@ router.post('/', [
 
     // Populate room details for response
     await booking.populate('room');
+
+    // Send email notifications (async, don't block response)
+    setImmediate(async () => {
+      try {
+        console.log(`📧 Sending notifications for booking ${booking._id}...`);
+        
+        // Send confirmation email to customer
+        const confirmationResult = await sendBookingConfirmation(booking, room);
+        if (confirmationResult && confirmationResult.success) {
+          console.log(`✅ Booking confirmation sent to ${booking.guestInfo.email}`);
+        } else {
+          console.log(`❌ Failed to send booking confirmation to ${booking.guestInfo.email}`);
+        }
+
+        // Send new booking alert to admin
+        const alertResult = await sendNewBookingAlert(booking, room);
+        if (alertResult && alertResult.success) {
+          console.log(`✅ New booking alert sent to admin`);
+        } else {
+          console.log(`❌ Failed to send new booking alert to admin`);
+        }
+
+      } catch (error) {
+        console.error('Error sending booking notifications:', error);
+      }
+    });
 
     res.status(201).json({
       message: 'Booking created successfully',

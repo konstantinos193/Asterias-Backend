@@ -22,6 +22,10 @@ const imagesRoutes = require('./routes/images');
 // Settings middleware
 const { checkMaintenanceMode, attachSettings } = require('./middleware/settings');
 
+// Email and scheduled tasks
+const { initializeEmailTransporter } = require('./services/emailService');
+const { startScheduledTasks } = require('./services/scheduledTasks');
+
 // Middleware
 app.use(helmet());
 app.use(cors({
@@ -116,6 +120,13 @@ const connectDB = async () => {
 const startServer = async () => {
   try {
     await connectDB();
+    
+    // Initialize email service
+    initializeEmailTransporter();
+    console.log('📧 Email service initialized');
+    
+    // Start scheduled notification tasks
+    startScheduledTasks();
     
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
