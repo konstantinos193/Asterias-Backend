@@ -282,6 +282,73 @@ router.get('/rooms', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
+// Create new room (admin only)
+router.post('/rooms', authenticateToken, requireAdmin, [
+  body('name').trim().isLength({ min: 2 }).withMessage('Room name must be at least 2 characters'),
+  body('description').trim().isLength({ min: 10 }).withMessage('Description must be at least 10 characters'),
+  body('price').isNumeric().withMessage('Price must be a number'),
+  body('capacity').isInt({ min: 1 }).withMessage('Capacity must be at least 1'),
+  body('totalRooms').isInt({ min: 1 }).withMessage('Total rooms must be at least 1')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const Room = require('../models/Room');
+    const roomData = req.body;
+
+    const room = new Room(roomData);
+    await room.save();
+
+    res.status(201).json({
+      message: 'Room created successfully',
+      room
+    });
+  } catch (error) {
+    console.error('Create room error:', error);
+    res.status(500).json({ error: 'Failed to create room' });
+  }
+});
+
+// Update room (admin only)
+router.put('/rooms/:id', authenticateToken, requireAdmin, [
+  body('name').optional().trim().isLength({ min: 2 }).withMessage('Room name must be at least 2 characters'),
+  body('description').optional().trim().isLength({ min: 10 }).withMessage('Description must be at least 10 characters'),
+  body('price').optional().isNumeric().withMessage('Price must be a number'),
+  body('capacity').optional().isInt({ min: 1 }).withMessage('Capacity must be at least 1'),
+  body('totalRooms').optional().isInt({ min: 1 }).withMessage('Total rooms must be at least 1')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const Room = require('../models/Room');
+    const updates = req.body;
+
+    const room = await Room.findByIdAndUpdate(
+      req.params.id,
+      updates,
+      { new: true, runValidators: true }
+    );
+
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    res.json({
+      message: 'Room updated successfully',
+      room
+    });
+  } catch (error) {
+    console.error('Update room error:', error);
+    res.status(500).json({ error: 'Failed to update room' });
+  }
+});
+
 // Delete room (admin only)
 router.delete('/rooms/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
