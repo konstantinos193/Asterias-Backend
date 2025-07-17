@@ -3,9 +3,11 @@ const User = require('./models/User');
 const Room = require('./models/Room');
 require('dotenv').config();
 
-const apartmentType = {
+const roomData = {
   name: 'Family Apartment',
+  nameKey: 'rooms.family.name',
   description: 'A beautifully furnished apartment with modern amenities, perfect for a relaxing getaway in Koronisia. All our apartments are identical in style and layout, offering consistent comfort and quality.',
+  descriptionKey: 'rooms.family.description',
   price: 95, // You can adjust this price
   capacity: 4,
   size: '35 sqm',
@@ -25,6 +27,20 @@ const apartmentType = {
     'Kitchenette',
     'Non-smoking',
     'Family Friendly'
+  ],
+  featureKeys: [
+    'rooms.feature.entirePlace',
+    'rooms.feature.freeParking',
+    'rooms.feature.breakfastIncluded',
+    'rooms.feature.balcony',
+    'rooms.feature.privateBathroom',
+    'rooms.feature.freeWifi',
+    'rooms.feature.shower',
+    'rooms.feature.airConditioning',
+    'rooms.feature.flatScreenTV',
+    'rooms.feature.kitchenette',
+    'rooms.feature.nonSmoking',
+    'rooms.feature.familyFriendly',
   ],
   amenities: {
     wifi: true,
@@ -71,8 +87,8 @@ async function seedDatabase() {
     console.log('Created admin user:', adminUser.email);
 
     // Create the single apartment type
-    await Room.create(apartmentType);
-    console.log(`Created 1 apartment type with a quantity of ${apartmentType.totalRooms}.`);
+    await Room.create(roomData);
+    console.log(`Created 1 apartment type with a quantity of ${roomData.totalRooms}.`);
 
     console.log('Database seeded successfully!');
     console.log('\nAdmin credentials:');

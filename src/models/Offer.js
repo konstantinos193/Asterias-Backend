@@ -6,9 +6,17 @@ const offerSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  titleKey: {
+    type: String,
+    required: true,
+  },
   description: {
     type: String,
     required: true
+  },
+  descriptionKey: {
+    type: String,
+    required: true,
   },
   image: {
     type: String,
@@ -53,7 +61,11 @@ const offerSchema = new mongoose.Schema({
     type: String,
     unique: true,
     sparse: true
-  }
+  },
+  badgeKey: { type: String },
+  roomTypeKey: { type: String },
+  includesKeys: [{ type: String }],
+  featured: { type: Boolean, default: false },
 }, {
   timestamps: true
 });
