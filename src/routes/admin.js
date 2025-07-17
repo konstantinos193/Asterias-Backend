@@ -38,9 +38,19 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
       bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
     });
 
-    // Available rooms
-    const availableRooms = await Room.countDocuments({ available: true });
-    const totalRooms = await Room.countDocuments();
+    // Available rooms - sum all totalRooms from all room types
+    const allRooms = await Room.find({}, 'totalRooms');
+    const totalRoomsCount = allRooms.reduce((sum, room) => sum + room.totalRooms, 0);
+    
+    // Currently occupied rooms
+    const occupiedRooms = await Booking.countDocuments({
+      checkIn: { $lte: today },
+      checkOut: { $gte: today },
+      bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
+    });
+    
+    const availableRooms = Math.max(0, totalRoomsCount - occupiedRooms);
+    const occupancyRate = totalRoomsCount > 0 ? Math.round((occupiedRooms / totalRoomsCount) * 100) : 0;
 
     // Total guests today
     const todayGuests = await Booking.aggregate([
@@ -74,21 +84,13 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
       }
     ]);
 
-    // Occupancy rate
-    const occupiedRooms = await Booking.countDocuments({
-      checkIn: { $lte: today },
-      checkOut: { $gte: today },
-      bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
-    });
-    const occupancyRate = totalRooms > 0 ? Math.round((occupiedRooms / totalRooms) * 100) : 0;
-
     // Yesterday's occupancy for comparison
     const yesterdayOccupiedRooms = await Booking.countDocuments({
       checkIn: { $lte: yesterday },
       checkOut: { $gte: yesterday },
       bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
     });
-    const yesterdayOccupancyRate = totalRooms > 0 ? Math.round((yesterdayOccupiedRooms / totalRooms) * 100) : 0;
+    const yesterdayOccupancyRate = totalRoomsCount > 0 ? Math.round((yesterdayOccupiedRooms / totalRoomsCount) * 100) : 0;
 
     // Calculate changes
     const calculateChange = (current, previous) => {
@@ -114,9 +116,9 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
     const occupancyChange = calculateChange(occupancyRate, yesterdayOccupancyRate);
     
     // For available rooms, we compare with total rooms as a percentage
-    const availabilityPercentage = totalRooms > 0 ? Math.round((availableRooms / totalRooms) * 100) : 0;
-    const yesterdayAvailableRooms = totalRooms - yesterdayOccupiedRooms;
-    const yesterdayAvailabilityPercentage = totalRooms > 0 ? Math.round((yesterdayAvailableRooms / totalRooms) * 100) : 0;
+    const availabilityPercentage = totalRoomsCount > 0 ? Math.round((availableRooms / totalRoomsCount) * 100) : 0;
+    const yesterdayAvailableRooms = totalRoomsCount - yesterdayOccupiedRooms;
+    const yesterdayAvailabilityPercentage = totalRoomsCount > 0 ? Math.round((yesterdayAvailableRooms / totalRoomsCount) * 100) : 0;
     const availabilityChange = calculateChange(availabilityPercentage, yesterdayAvailabilityPercentage);
 
     // Recent bookings
