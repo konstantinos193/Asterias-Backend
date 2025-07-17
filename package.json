@@ -6,8 +6,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "build": "echo 'No build step required'",
-    "test": "jest"
+    "build": "echo 'No build step required for Node.js backend'",
+    "test": "jest",
+    "seed": "node src/seed.js"
   },
   "keywords": ["hotel", "booking", "api", "express", "mongodb"],
   "author": "Asterias Homes",

@@ -1,281 +1,276 @@
 # Asterias Homes Backend API
 
-A comprehensive Express.js backend for the Asterias Homes hotel booking system, built with MongoDB and featuring Stripe payment integration.
+A comprehensive hotel booking system backend built with Node.js, Express, and MongoDB.
 
-## Features
+## 🚀 Features
 
-- **Authentication & Authorization**: JWT-based authentication with role-based access control
-- **Room Management**: CRUD operations for rooms with availability checking
+- **Authentication & Authorization**: JWT-based user authentication with role-based access
+- **Room Management**: CRUD operations for hotel rooms with availability checking
 - **Booking System**: Complete booking workflow with payment integration
 - **Payment Processing**: Stripe integration for secure payments
-- **Admin Dashboard**: Comprehensive admin panel with statistics and management tools
-- **Contact Management**: Contact form handling and admin response system
-- **Offer Management**: Special offers and discounts system
-- **User Management**: User registration, profiles, and admin user management
+- **Admin Panel**: Administrative functions for hotel management
+- **Contact Management**: Customer inquiry handling
+- **Offers & Packages**: Special deals and promotional offers
+- **Image Upload**: Cloudinary integration for image storage
+- **Email Notifications**: Automated email sending with Nodemailer
 
-## Tech Stack
+## 🛠️ Tech Stack
 
-- **Runtime**: Node.js
+- **Runtime**: Node.js (>=18.0.0)
 - **Framework**: Express.js
 - **Database**: MongoDB with Mongoose ODM
 - **Authentication**: JWT (JSON Web Tokens)
 - **Payment**: Stripe
-- **Validation**: Express-validator
-- **Security**: Helmet, CORS, Rate limiting
-- **File Upload**: Multer (for future image uploads)
+- **File Upload**: Multer + Cloudinary
+- **Email**: Nodemailer
+- **Security**: Helmet, CORS, Rate Limiting
 
-## API Endpoints
+## 📋 Prerequisites
 
-### Authentication
-- `POST /api/auth/register` - Register new user
-- `POST /api/auth/login` - User login
-- `GET /api/auth/profile` - Get user profile
-- `PUT /api/auth/profile` - Update user profile
-- `PUT /api/auth/change-password` - Change password
-- `POST /api/auth/refresh` - Refresh token
-- `POST /api/auth/logout` - Logout
+- Node.js >= 18.0.0
+- MongoDB database (local or cloud)
+- Stripe account for payments
+- Cloudinary account for image uploads (optional)
 
-### Rooms
-- `GET /api/rooms` - Get all rooms (public)
-- `GET /api/rooms/:id` - Get single room (public)
-- `GET /api/rooms/:id/availability` - Check room availability
-- `POST /api/rooms` - Create room (admin)
-- `PUT /api/rooms/:id` - Update room (admin)
-- `DELETE /api/rooms/:id` - Delete room (admin)
-- `POST /api/rooms/:id/images` - Upload room images (admin)
-- `GET /api/rooms/stats/overview` - Room statistics (admin)
+## 🚀 Quick Start
 
-### Bookings
-- `POST /api/bookings` - Create new booking
-- `GET /api/bookings/my-bookings` - Get user's bookings
-- `GET /api/bookings/:id` - Get single booking
-- `PATCH /api/bookings/:id/status` - Update booking status (admin)
-- `GET /api/bookings` - Get all bookings (admin)
-- `POST /api/bookings/:id/cancel` - Cancel booking
-- `GET /api/bookings/stats/overview` - Booking statistics (admin)
-
-### Offers
-- `GET /api/offers` - Get active offers (public)
-- `GET /api/offers/:id` - Get single offer (public)
-- `POST /api/offers` - Create offer (admin)
-- `PUT /api/offers/:id` - Update offer (admin)
-- `DELETE /api/offers/:id` - Delete offer (admin)
-- `GET /api/offers/admin/all` - Get all offers (admin)
-- `PATCH /api/offers/:id/toggle` - Toggle offer status (admin)
-- `POST /api/offers/validate-code` - Validate offer code
-
-### Contact
-- `POST /api/contact` - Submit contact form (public)
-- `GET /api/contact` - Get all contacts (admin)
-- `GET /api/contact/:id` - Get single contact (admin)
-- `PATCH /api/contact/:id/status` - Update contact status (admin)
-- `POST /api/contact/:id/reply` - Reply to contact (admin)
-- `PATCH /api/contact/:id/read` - Mark as read (admin)
-- `PATCH /api/contact/:id/close` - Close contact (admin)
-- `GET /api/contact/stats/overview` - Contact statistics (admin)
-- `DELETE /api/contact/:id` - Delete contact (admin)
-
-### Admin
-- `GET /api/admin/dashboard` - Dashboard overview
-- `GET /api/admin/users` - Get all users
-- `GET /api/admin/users/:id` - Get single user
-- `PUT /api/admin/users/:id` - Update user
-- `DELETE /api/admin/users/:id` - Delete user
-- `POST /api/admin/users/admin` - Create admin user
-- `GET /api/admin/stats` - System statistics
-
-### Payments
-- `POST /api/payments/create-payment-intent` - Create payment intent
-- `POST /api/payments/confirm-payment` - Confirm payment and create booking
-- `GET /api/payments/status/:paymentIntentId` - Get payment status
-- `POST /api/payments/refund/:bookingId` - Refund payment (admin)
-- `POST /api/payments/webhook` - Stripe webhook handler
-
-## Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd backend
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Set up environment variables**
-   ```bash
-   cp env.example .env
-   ```
-   Edit `.env` file with your configuration
-
-4. **Set up MongoDB**
-   - Install MongoDB locally or use MongoDB Atlas
-   - Update `MONGODB_URI` in your `.env` file
-
-5. **Set up Stripe** (optional for development)
-   - Create a Stripe account
-   - Get your API keys from the Stripe dashboard
-   - Update Stripe configuration in `.env`
-
-6. **Seed the database**
-   ```bash
-   npm run seed
-   ```
-
-7. **Start the server**
-   ```bash
-   # Development
-   npm run dev
-   
-   # Production
-   npm start
-   ```
-
-## Environment Variables
-
-### Required
-- `PORT` - Server port (default: 5000)
-- `MONGODB_URI` - MongoDB connection string
-- `JWT_SECRET` - Secret key for JWT tokens
-- `FRONTEND_URL` - Frontend URL for CORS
-
-### Optional
-- `JWT_REFRESH_SECRET` - Secret key for refresh tokens
-- `STRIPE_SECRET_KEY` - Stripe secret key
-- `STRIPE_PUBLISHABLE_KEY` - Stripe publishable key
-- `STRIPE_WEBHOOK_SECRET` - Stripe webhook secret
-- `ADMIN_EMAIL` - Default admin email
-- `ADMIN_PASSWORD` - Default admin password
-- `ADMIN_NAME` - Default admin name
-
-## Database Models
-
-### User
-- Authentication and profile management
-- Role-based access control (ADMIN/USER)
-- Password hashing with bcrypt
-
-### Room
-- Room information and availability
-- Amenities and features
-- Pricing and capacity
-
-### Booking
-- Booking details and status management
-- Payment information
-- Guest information
-
-### Offer
-- Special offers and discounts
-- Date-based validity
-- Room-specific offers
-
-### Contact
-- Contact form submissions
-- Admin response system
-- Status tracking
-
-## Security Features
-
-- **JWT Authentication**: Secure token-based authentication
-- **Password Hashing**: bcrypt for password security
-- **Input Validation**: Express-validator for request validation
-- **Rate Limiting**: Protection against abuse
-- **CORS**: Cross-origin resource sharing configuration
-- **Helmet**: Security headers
-- **Environment Variables**: Secure configuration management
-
-## Deployment
-
-### Render Deployment
-
-1. **Create a new Web Service on Render**
-2. **Connect your GitHub repository**
-3. **Configure environment variables**
-4. **Set build command**: `npm install`
-5. **Set start command**: `npm start`
-6. **Deploy**
-
-### Environment Variables for Production
+### 1. Clone and Install
 
 ```bash
+cd backend
+npm install
+```
+
+### 2. Environment Setup
+
+Copy the example environment file and configure your variables:
+
+```bash
+cp env.example .env
+```
+
+Edit `.env` with your configuration:
+
+```env
+# Server Configuration
+PORT=5000
+NODE_ENV=development
+
+# Database Configuration
+MONGODB_URI=mongodb://localhost:27017/asterias-homes
+
+# JWT Configuration
+JWT_SECRET=your-super-secret-jwt-key-here
+JWT_REFRESH_SECRET=your-super-secret-refresh-key-here
+
+# Stripe Configuration
+STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key_here
+STRIPE_PUBLISHABLE_KEY=pk_test_your_stripe_publishable_key_here
+STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
+
+# Frontend URL (for CORS)
+FRONTEND_URL=http://localhost:3000
+
+# Email Configuration (optional)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+
+# Cloudinary Configuration (optional, for image uploads)
+CLOUDINARY_CLOUD_NAME=your-cloud-name
+CLOUDINARY_API_KEY=your-api-key
+CLOUDINARY_API_SECRET=your-api-secret
+
+# Admin Default Credentials (for initial setup)
+ADMIN_EMAIL=admin@asteriashomes.com
+ADMIN_PASSWORD=admin123
+ADMIN_NAME=Admin User
+```
+
+### 3. Database Setup
+
+Make sure MongoDB is running and accessible with the URI specified in your `.env` file.
+
+### 4. Seed Database (Optional)
+
+```bash
+npm run seed
+```
+
+This will create initial data including admin user, sample rooms, and offers.
+
+### 5. Start Development Server
+
+```bash
+npm run dev
+```
+
+The server will start on `http://localhost:5000`
+
+## 🚀 Deployment on Render
+
+### 1. Connect Your Repository
+
+1. Go to [Render Dashboard](https://dashboard.render.com/)
+2. Click "New +" and select "Web Service"
+3. Connect your GitHub repository
+4. Select the `backend` directory
+
+### 2. Configure Environment Variables
+
+In Render dashboard, add these environment variables:
+
+```env
 NODE_ENV=production
-MONGODB_URI=your-mongodb-atlas-uri
-JWT_SECRET=your-production-jwt-secret
+PORT=10000
+MONGODB_URI=your_mongodb_atlas_connection_string
+JWT_SECRET=your_production_jwt_secret
+JWT_REFRESH_SECRET=your_production_refresh_secret
+STRIPE_SECRET_KEY=your_stripe_secret_key
+STRIPE_PUBLISHABLE_KEY=your_stripe_publishable_key
+STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
 FRONTEND_URL=https://your-frontend-domain.com
-STRIPE_SECRET_KEY=your-stripe-secret-key
-STRIPE_WEBHOOK_SECRET=your-stripe-webhook-secret
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+CLOUDINARY_CLOUD_NAME=your-cloud-name
+CLOUDINARY_API_KEY=your-api-key
+CLOUDINARY_API_SECRET=your-api-secret
+ADMIN_EMAIL=admin@asteriashomes.com
+ADMIN_PASSWORD=secure_admin_password
+ADMIN_NAME=Admin User
 ```
 
-## API Documentation
+### 3. Build & Deploy Settings
 
-### Authentication Headers
+- **Build Command**: `npm install`
+- **Start Command**: `npm start`
+- **Environment**: Node
 
-For protected routes, include the JWT token in the Authorization header:
+### 4. Deploy
+
+Click "Create Web Service" and Render will automatically deploy your backend.
+
+## 📚 API Endpoints
+
+### Authentication
+- `POST /api/auth/register` - User registration
+- `POST /api/auth/login` - User login
+- `POST /api/auth/refresh` - Refresh token
+- `POST /api/auth/logout` - User logout
+
+### Rooms
+- `GET /api/rooms` - Get all rooms
+- `GET /api/rooms/:id` - Get room by ID
+- `POST /api/rooms` - Create room (admin only)
+- `PUT /api/rooms/:id` - Update room (admin only)
+- `DELETE /api/rooms/:id` - Delete room (admin only)
+
+### Bookings
+- `GET /api/bookings` - Get user bookings
+- `POST /api/bookings` - Create booking
+- `GET /api/bookings/:id` - Get booking by ID
+- `PUT /api/bookings/:id` - Update booking
+- `DELETE /api/bookings/:id` - Cancel booking
+
+### Payments
+- `POST /api/payments/create-payment-intent` - Create Stripe payment intent
+- `POST /api/payments/webhook` - Stripe webhook handler
+
+### Admin
+- `GET /api/admin/stats` - Get admin statistics
+- `GET /api/admin/bookings` - Get all bookings (admin only)
+- `PUT /api/admin/bookings/:id` - Update booking status (admin only)
+
+### Offers
+- `GET /api/offers` - Get all offers
+- `POST /api/offers` - Create offer (admin only)
+- `PUT /api/offers/:id` - Update offer (admin only)
+- `DELETE /api/offers/:id` - Delete offer (admin only)
+
+### Contact
+- `POST /api/contact` - Submit contact form
+
+## 🔧 Development
+
+### Available Scripts
+
+```bash
+npm start          # Start production server
+npm run dev        # Start development server with nodemon
+npm run build      # Build step (no-op for Node.js)
+npm run test       # Run tests
+npm run seed       # Seed database with initial data
 ```
-Authorization: Bearer <your-jwt-token>
+
+### Project Structure
+
+```
+backend/
+├── src/
+│   ├── models/          # MongoDB models
+│   ├── routes/          # API route handlers
+│   ├── middleware/      # Custom middleware
+│   ├── index.js         # Main server file
+│   └── seed.js          # Database seeding script
+├── package.json
+├── env.example
+└── README.md
 ```
 
-### Response Format
+## 🔒 Security Features
 
-Success responses:
+- **Helmet**: Security headers
+- **CORS**: Cross-origin resource sharing
+- **Rate Limiting**: API rate limiting
+- **Input Validation**: Express-validator
+- **JWT Authentication**: Secure token-based auth
+- **Password Hashing**: bcryptjs
+
+## 📊 Health Check
+
+Visit `/health` to check API status:
+
 ```json
 {
-  "message": "Success message",
-  "data": { ... }
+  "status": "OK",
+  "message": "Asterias Homes API is running",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "environment": "production"
 }
 ```
 
-Error responses:
-```json
-{
-  "error": "Error message",
-  "details": { ... }
-}
-```
+## 🐛 Troubleshooting
 
-### Pagination
+### Common Issues
 
-List endpoints support pagination:
-```
-GET /api/rooms?page=1&limit=10&sortBy=price&sortOrder=asc
-```
+1. **MongoDB Connection Error**
+   - Check your `MONGODB_URI` environment variable
+   - Ensure MongoDB is running and accessible
 
-Response includes pagination info:
-```json
-{
-  "data": [...],
-  "pagination": {
-    "page": 1,
-    "limit": 10,
-    "total": 50,
-    "pages": 5
-  }
-}
-```
+2. **JWT Errors**
+   - Verify `JWT_SECRET` and `JWT_REFRESH_SECRET` are set
+   - Use strong, unique secrets in production
 
-## Development
+3. **CORS Errors**
+   - Check `FRONTEND_URL` environment variable
+   - Ensure frontend URL is correctly configured
 
-### Scripts
+4. **Stripe Payment Issues**
+   - Verify Stripe keys are correct
+   - Check webhook endpoint configuration
 
-- `npm start` - Start production server
-- `npm run dev` - Start development server with nodemon
-- `npm run seed` - Seed database with initial data
-- `npm test` - Run tests (when implemented)
+### Logs
 
-### Database Seeding
+Check Render logs for detailed error information and debugging.
 
-The seed script creates:
-- Admin user with default credentials
-- Sample rooms with different types and amenities
+## 📝 License
 
-Default admin credentials:
-- Email: admin@asteriashomes.com
-- Password: admin123
+MIT License - see LICENSE file for details.
 
-## Contributing
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
@@ -283,6 +278,6 @@ Default admin credentials:
 4. Add tests if applicable
 5. Submit a pull request
 
-## License
+## 📞 Support
 
-MIT License - see LICENSE file for details 
+For support, email support@asteriashomes.com or create an issue in the repository. 
