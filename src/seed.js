@@ -3,164 +3,53 @@ const User = require('./models/User');
 const Room = require('./models/Room');
 require('dotenv').config();
 
-const rooms = [
-  {
-    name: 'Standard Double Room',
-    description: 'Comfortable double room with modern amenities and beautiful views.',
-    price: 90,
-    capacity: 2,
-    size: '25 sqm',
-    bedType: 'Double Bed',
-    view: 'Garden View',
-    bathroom: 'Private Bathroom',
-    features: ['AC', 'WiFi', 'TV', 'Balcony'],
-    amenities: {
-      wifi: true,
-      ac: true,
-      tv: true,
-      minibar: false,
-      balcony: true,
-      seaView: false,
-      roomService: false,
-      safe: true
-    },
-    totalRooms: 3,
-    available: true,
-    image: '/room-1.png',
-    rating: 4.5,
-    reviewCount: 12
+const apartmentType = {
+  name: 'Family Apartment',
+  description: 'A beautifully furnished apartment with modern amenities, perfect for a relaxing getaway in Koronisia. All our apartments are identical in style and layout, offering consistent comfort and quality.',
+  price: 95, // You can adjust this price
+  capacity: 4,
+  size: '35 sqm',
+  bedType: '1 Double Bed, 1 Sofa Bed',
+  view: 'Garden or Sea View',
+  bathroom: 'Private Bathroom with Shower',
+  features: [
+    'Entire Place',
+    'Free Parking',
+    'Breakfast Included',
+    'Balcony',
+    'Private Bathroom',
+    'Free Wifi',
+    'Shower',
+    'Air Conditioning',
+    'Flat-screen TV',
+    'Kitchenette',
+    'Non-smoking',
+    'Family Friendly'
+  ],
+  amenities: {
+    wifi: true,
+    ac: true,
+    tv: true,
+    minibar: false,
+    balcony: true,
+    seaView: false,
+    roomService: false,
+    safe: true
   },
-  {
-    name: 'Family Room',
-    description: 'Spacious family room perfect for families with children.',
-    price: 120,
-    capacity: 4,
-    size: '35 sqm',
-    bedType: 'Double Bed + Sofa Bed',
-    view: 'Garden View',
-    bathroom: 'Private Bathroom',
-    features: ['AC', 'WiFi', 'TV', 'Balcony', 'Sofa Bed'],
-    amenities: {
-      wifi: true,
-      ac: true,
-      tv: true,
-      minibar: false,
-      balcony: true,
-      seaView: false,
-      roomService: false,
-      safe: true
-    },
-    totalRooms: 2,
-    available: true,
-    image: '/room-2.png',
-    rating: 4.7,
-    reviewCount: 8
-  },
-  {
-    name: 'Romantic Sea View Room',
-    description: 'Luxurious room with stunning sea views and romantic atmosphere.',
-    price: 150,
-    capacity: 2,
-    size: '30 sqm',
-    bedType: 'King Bed',
-    view: 'Sea View',
-    bathroom: 'Private Bathroom with Jacuzzi',
-    features: ['AC', 'WiFi', 'TV', 'Sea View', 'Jacuzzi', 'Breakfast Included'],
-    amenities: {
-      wifi: true,
-      ac: true,
-      tv: true,
-      minibar: true,
-      balcony: true,
-      seaView: true,
-      roomService: true,
-      safe: true
-    },
-    totalRooms: 1,
-    available: true,
-    image: '/room-3.png',
-    rating: 4.9,
-    reviewCount: 15
-  },
-  {
-    name: 'Twin Room',
-    description: 'Comfortable twin room ideal for friends or business travelers.',
-    price: 95,
-    capacity: 2,
-    size: '22 sqm',
-    bedType: 'Twin Beds',
-    view: 'Garden View',
-    bathroom: 'Private Bathroom',
-    features: ['AC', 'WiFi', 'TV'],
-    amenities: {
-      wifi: true,
-      ac: true,
-      tv: true,
-      minibar: false,
-      balcony: false,
-      seaView: false,
-      roomService: false,
-      safe: true
-    },
-    totalRooms: 2,
-    available: true,
-    image: '/room-4.png',
-    rating: 4.3,
-    reviewCount: 6
-  },
-  {
-    name: 'Deluxe Suite',
-    description: 'Luxurious suite with separate living area and premium amenities.',
-    price: 200,
-    capacity: 4,
-    size: '50 sqm',
-    bedType: 'King Bed + Sofa Bed',
-    view: 'Sea View',
-    bathroom: 'Private Bathroom with Shower',
-    features: ['AC', 'WiFi', 'TV', 'Separate Living Area', 'Balcony', 'Sea View', 'Kitchenette'],
-    amenities: {
-      wifi: true,
-      ac: true,
-      tv: true,
-      minibar: true,
-      balcony: true,
-      seaView: true,
-      roomService: true,
-      safe: true
-    },
-    totalRooms: 1,
-    available: true,
-    image: '/room-5.png',
-    rating: 4.8,
-    reviewCount: 10
-  },
-  {
-    name: 'Accessible Room',
-    description: 'Wheelchair accessible room with adapted facilities.',
-    price: 100,
-    capacity: 2,
-    size: '28 sqm',
-    bedType: 'Double Bed (Accessible)',
-    view: 'Garden View',
-    bathroom: 'Accessible Bathroom',
-    features: ['AC', 'WiFi', 'TV', 'Accessible Bathroom'],
-    amenities: {
-      wifi: true,
-      ac: true,
-      tv: true,
-      minibar: false,
-      balcony: false,
-      seaView: false,
-      roomService: false,
-      safe: true
-    },
-    totalRooms: 1,
-    available: true,
-    image: '/room-6.png',
-    rating: 4.6,
-    reviewCount: 4
-  }
-];
+  totalRooms: 7, // We have 7 identical apartments
+  image: 'https://i.imgur.com/SaAHqbC.jpeg', // Main image from user
+  images: [
+    'https://i.imgur.com/SaAHqbC.jpeg',
+    'https://i.imgur.com/VjuPC23.png', // Image with towels on bed
+    'https://i.imgur.com/2JTTkSc.png', // Kitchen image
+    'https://i.imgur.com/r1uVnhU.png', // Double single bed image
+    'https://i.imgur.com/X7AG1TW.png', // Another double single bed image
+    // You can add more direct image links here
+  ],
+  rating: 4.8,
+  reviewCount: 25,
+  bookingcom_room_id: 'YOUR_BCOM_ROOM_TYPE_ID' // Replace with your actual Booking.com Room Type ID
+};
 
 async function seedDatabase() {
   try {
@@ -181,9 +70,9 @@ async function seedDatabase() {
     });
     console.log('Created admin user:', adminUser.email);
 
-    // Create rooms
-    const createdRooms = await Room.insertMany(rooms);
-    console.log(`Created ${createdRooms.length} rooms`);
+    // Create the single apartment type
+    await Room.create(apartmentType);
+    console.log(`Created 1 apartment type with a quantity of ${apartmentType.totalRooms}.`);
 
     console.log('Database seeded successfully!');
     console.log('\nAdmin credentials:');

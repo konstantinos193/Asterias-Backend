@@ -16,6 +16,7 @@ const offerRoutes = require('./routes/offers');
 const contactRoutes = require('./routes/contact');
 const adminRoutes = require('./routes/admin');
 const paymentRoutes = require('./routes/payments');
+const bookingcomWebhookRoutes = require('./routes/bookingcom.webhook');
 
 // Middleware
 app.use(helmet());
@@ -69,6 +70,7 @@ app.use('/api/offers', offerRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/bookingcom-webhooks', bookingcomWebhookRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

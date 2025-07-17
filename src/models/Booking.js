@@ -88,6 +88,17 @@ const bookingSchema = new mongoose.Schema({
   notes: {
     type: String,
     default: ''
+  },
+  bookingcom_booking_id: {
+    type: String,
+    default: null,
+    unique: true,
+    sparse: true
+  },
+  source: {
+    type: String,
+    enum: ['asterias', 'bookingcom'],
+    default: 'asterias'
   }
 }, {
   timestamps: true
@@ -127,16 +138,19 @@ bookingSchema.virtual('nights').get(function() {
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 });
 
-// Method to check if booking conflicts with dates
-bookingSchema.statics.checkAvailability = async function(roomId, checkIn, checkOut, excludeBookingId = null) {
+// Method to check if an apartment is available for the given dates
+bookingSchema.statics.isApartmentAvailable = async function(roomTypeId, checkIn, checkOut, excludeBookingId = null) {
+  const Room = mongoose.model('Room');
+  const roomType = await Room.findById(roomTypeId);
+  if (!roomType) {
+    throw new Error('Room type not found');
+  }
+
   const query = {
-    roomId,
+    roomId: roomTypeId,
     bookingStatus: { $nin: ['CANCELLED'] },
     $or: [
-      {
-        checkIn: { $lt: checkOut },
-        checkOut: { $gt: checkIn }
-      }
+      { checkIn: { $lt: checkOut }, checkOut: { $gt: checkIn } }, // Overlaps
     ]
   };
 
@@ -144,9 +158,33 @@ bookingSchema.statics.checkAvailability = async function(roomId, checkIn, checkO
     query._id = { $ne: excludeBookingId };
   }
 
-  const conflictingBooking = await this.findOne(query);
-  return !conflictingBooking;
+  const conflictingBookings = await this.countDocuments(query);
+
+  return conflictingBookings < roomType.totalRooms;
 };
+
+// Method to get the number of available apartments for a date range
+bookingSchema.statics.getAvailableApartmentCount = async function(roomTypeId, checkIn, checkOut) {
+    const Room = mongoose.model('Room');
+    const roomType = await Room.findById(roomTypeId);
+    if (!roomType) {
+        return 0;
+    }
+
+    const query = {
+        roomId: roomTypeId,
+        bookingStatus: { $nin: ['CANCELLED'] },
+        $or: [
+            { checkIn: { $lt: checkOut }, checkOut: { $gt: checkIn } },
+        ]
+    };
+
+    const conflictingBookings = await this.countDocuments(query);
+    const availableCount = roomType.totalRooms - conflictingBookings;
+
+    return availableCount > 0 ? availableCount : 0;
+};
+
 
 // Method to get booking statistics
 bookingSchema.statics.getStats = async function() {

@@ -54,10 +54,6 @@ const roomSchema = new mongoose.Schema({
     default: 1,
     min: 1
   },
-  available: {
-    type: Boolean,
-    default: true
-  },
   image: {
     type: String,
     default: null
@@ -74,25 +70,29 @@ const roomSchema = new mongoose.Schema({
   reviewCount: {
     type: Number,
     default: 0
+  },
+  bookingcom_room_id: {
+    type: String,
+    default: null,
+    unique: true,
+    sparse: true
+  },
+  source: {
+    type: String,
+    enum: ['asterias', 'bookingcom'],
+    default: 'asterias'
   }
 }, {
   timestamps: true
 });
 
 // Index for better query performance
-roomSchema.index({ available: 1, price: 1 });
 roomSchema.index({ capacity: 1 });
 
 // Virtual for average rating
 roomSchema.virtual('averageRating').get(function() {
   return this.rating;
 });
-
-// Method to check availability for a date range
-roomSchema.methods.isAvailableForDates = function(checkIn, checkOut) {
-  // This would need to be implemented with booking logic
-  return this.available;
-};
 
 // Method to update rating
 roomSchema.methods.updateRating = function(newRating) {

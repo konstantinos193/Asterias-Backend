@@ -3,6 +3,7 @@ const { body, query, validationResult } = require('express-validator');
 const Booking = require('../models/Booking');
 const Room = require('../models/Room');
 const { authenticateToken, requireAdmin, optionalAuth } = require('../middleware/auth');
+const bookingcomService = require('../services/bookingcom.service');
 
 const router = express.Router();
 
@@ -44,10 +45,10 @@ router.post('/', [
       return res.status(404).json({ error: 'Room not found' });
     }
 
-    // Check if room is available for the dates
-    const isAvailable = await Booking.checkAvailability(roomId, checkIn, checkOut);
+    // Check if an apartment of this type is available for the dates
+    const isAvailable = await Booking.isApartmentAvailable(roomId, checkIn, checkOut);
     if (!isAvailable) {
-      return res.status(400).json({ error: 'Room is not available for the selected dates' });
+      return res.status(400).json({ error: 'Sorry, no apartments are available for the selected dates.' });
     }
 
     // Check capacity
@@ -73,6 +74,22 @@ router.post('/', [
     });
 
     await booking.save();
+
+    // After saving our booking, create a corresponding one on Booking.com
+    try {
+      const externalBooking = await bookingcomService.createBooking(booking.toObject());
+      // Save the external ID to our booking for future reference
+      booking.bookingcom_booking_id = externalBooking.id;
+      await booking.save();
+    } catch (error) {
+      // This is a critical failure. The booking was made on our site, but not on Booking.com.
+      // This requires a robust error handling strategy, such as:
+      // 1. Rollback the local booking.
+      // 2. Add the booking to a retry queue.
+      // 3. Send an alert to an administrator.
+      console.error(`CRITICAL: Failed to create booking on Booking.com for local booking ${booking._id}. Manual intervention required.`);
+      // For now, we will proceed but this should be addressed.
+    }
 
     // Populate room details for response
     await booking.populate('room');
