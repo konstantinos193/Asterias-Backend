@@ -66,21 +66,35 @@ router.post('/login', [
     }
 
     const { email, password } = req.body;
+    
+    console.log('Login attempt for email:', email);
 
     // Find user by email
     const user = await User.findByEmail(email);
     if (!user) {
+      console.log('User not found for email:', email);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    console.log('User found:', {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive
+    });
+
     // Check if user is active
     if (!user.isActive) {
+      console.log('User is not active:', email);
       return res.status(401).json({ error: 'Account is deactivated' });
     }
 
     // Verify password
     const isPasswordValid = await user.comparePassword(password);
+    console.log('Password validation result:', isPasswordValid);
+    
     if (!isPasswordValid) {
+      console.log('Invalid password for user:', email);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -90,6 +104,8 @@ router.post('/login', [
     // Generate tokens
     const token = generateToken(user._id);
     const refreshToken = generateRefreshToken(user._id);
+
+    console.log('Login successful for user:', email);
 
     res.json({
       message: 'Login successful',
@@ -335,6 +351,36 @@ router.delete('/debug/delete-user', async (req, res) => {
   } catch (error) {
     console.error('Delete user error:', error);
     res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// Test password hashing (for debugging)
+router.post('/debug/test-password', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const user = await User.findByEmail(email);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const isPasswordValid = await user.comparePassword(password);
+    
+    res.json({  
+      userFound: true,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive,
+      passwordValid: isPasswordValid,
+      hashedPassword: user.password.substring(0, 20) // Show first 20 chars for debugging
+    });
+  } catch (error) {
+    console.error('Password test error:', error);
+    res.status(500).json({ error: 'Failed to test password' });
   }
 });
 
