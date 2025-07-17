@@ -4,6 +4,7 @@ const Booking = require('../models/Booking');
 const Room = require('../models/Room');
 const { authenticateToken, requireAdmin, optionalAuth } = require('../middleware/auth');
 const bookingcomService = require('../services/bookingcom.service');
+const requireApiKey = require('../middleware/apiKey');
 
 const router = express.Router();
 
@@ -345,9 +346,10 @@ router.get('/stats/overview', authenticateToken, requireAdmin, async (req, res) 
 });
 
 // Get availability for a room type and date range
-router.get('/availability', async (req, res) => {
+router.get('/availability', requireApiKey, async (req, res) => {
   try {
     const { roomId, checkIn, checkOut } = req.query;
+    console.log('AVAILABILITY REQUEST', { roomId, checkIn, checkOut });
     if (!roomId || !checkIn || !checkOut) {
       return res.status(400).json({ error: 'roomId, checkIn, and checkOut are required' });
     }
@@ -363,6 +365,7 @@ router.get('/availability', async (req, res) => {
       ]
     });
     const available = Math.max(room.totalRooms - booked, 0);
+    console.log('AVAILABILITY RESPONSE', { available, totalRooms: room.totalRooms, booked });
     res.json({
       available,
       totalRooms: room.totalRooms,
@@ -375,7 +378,7 @@ router.get('/availability', async (req, res) => {
 });
 
 // Get calendar availability for a room type and date range
-router.get('/calendar-availability', async (req, res) => {
+router.get('/calendar-availability', requireApiKey, async (req, res) => {
   try {
     const { roomId, start, end } = req.query;
     if (!roomId || !start || !end) {
