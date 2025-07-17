@@ -235,6 +235,87 @@ router.get('/bookings', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
+// Get all rooms (admin only)
+router.get('/rooms', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const Room = require('../models/Room');
+    const {
+      available,
+      roomType,
+      page = 1,
+      limit = 20,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    // Build filter
+    const filter = {};
+    if (available !== undefined) filter.available = available === 'true';
+    if (roomType) filter.roomType = roomType;
+
+    // Build sort
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    // Pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const rooms = await Room.find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await Room.countDocuments(filter);
+
+    res.json({
+      rooms,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('Get all rooms error:', error);
+    res.status(500).json({ error: 'Failed to get rooms' });
+  }
+});
+
+// Delete room (admin only)
+router.delete('/rooms/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const Room = require('../models/Room');
+    const Booking = require('../models/Booking');
+    
+    const room = await Room.findById(req.params.id);
+    
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    // Check if room has active bookings
+    const hasActiveBookings = await Booking.exists({ 
+      roomId: room._id,
+      bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
+      checkOut: { $gte: new Date() }
+    });
+    
+    if (hasActiveBookings) {
+      return res.status(400).json({ 
+        error: 'Cannot delete room with active bookings' 
+      });
+    }
+
+    await Room.findByIdAndDelete(req.params.id);
+
+    res.json({ message: 'Room deleted successfully' });
+  } catch (error) {
+    console.error('Delete room error:', error);
+    res.status(500).json({ error: 'Failed to delete room' });
+  }
+});
+
 // Get all users (admin only)
 router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
