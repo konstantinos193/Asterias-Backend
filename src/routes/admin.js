@@ -17,14 +17,30 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
+    // Yesterday's dates for comparison
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    const startOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate());
+    const endOfYesterday = new Date(startOfYesterday.getTime() + 24 * 60 * 60 * 1000);
+
+    // Last month for comparison
+    const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+
     // Today's arrivals
     const todayArrivals = await Booking.countDocuments({
       checkIn: { $gte: startOfDay, $lt: endOfDay },
       bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
     });
 
+    // Yesterday's arrivals for comparison
+    const yesterdayArrivals = await Booking.countDocuments({
+      checkIn: { $gte: startOfYesterday, $lt: endOfYesterday },
+      bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
+    });
+
     // Available rooms
     const availableRooms = await Room.countDocuments({ available: true });
+    const totalRooms = await Room.countDocuments();
 
     // Total guests today
     const todayGuests = await Booking.aggregate([
@@ -42,14 +58,66 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
       }
     ]);
 
+    // Yesterday's guests for comparison
+    const yesterdayGuests = await Booking.aggregate([
+      {
+        $match: {
+          checkIn: { $gte: startOfYesterday, $lt: endOfYesterday },
+          bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: { $add: ['$adults', '$children'] } }
+        }
+      }
+    ]);
+
     // Occupancy rate
-    const totalRooms = await Room.countDocuments();
     const occupiedRooms = await Booking.countDocuments({
       checkIn: { $lte: today },
       checkOut: { $gte: today },
       bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
     });
     const occupancyRate = totalRooms > 0 ? Math.round((occupiedRooms / totalRooms) * 100) : 0;
+
+    // Yesterday's occupancy for comparison
+    const yesterdayOccupiedRooms = await Booking.countDocuments({
+      checkIn: { $lte: yesterday },
+      checkOut: { $gte: yesterday },
+      bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
+    });
+    const yesterdayOccupancyRate = totalRooms > 0 ? Math.round((yesterdayOccupiedRooms / totalRooms) * 100) : 0;
+
+    // Calculate changes
+    const calculateChange = (current, previous) => {
+      if (previous === 0) {
+        return current > 0 ? { change: `+${current}`, changeType: 'increase' } : { change: '', changeType: 'neutral' };
+      }
+      const diff = current - previous;
+      const percentage = Math.round((diff / previous) * 100);
+      if (percentage > 0) {
+        return { change: `+${percentage}%`, changeType: 'increase' };
+      } else if (percentage < 0) {
+        return { change: `${percentage}%`, changeType: 'decrease' };
+      } else {
+        return { change: '0%', changeType: 'neutral' };
+      }
+    };
+
+    const todayGuestsCount = todayGuests[0]?.total || 0;
+    const yesterdayGuestsCount = yesterdayGuests[0]?.total || 0;
+
+    const arrivalsChange = calculateChange(todayArrivals, yesterdayArrivals);
+    const guestsChange = calculateChange(todayGuestsCount, yesterdayGuestsCount);
+    const occupancyChange = calculateChange(occupancyRate, yesterdayOccupancyRate);
+    
+    // For available rooms, we compare with total rooms as a percentage
+    const availabilityPercentage = totalRooms > 0 ? Math.round((availableRooms / totalRooms) * 100) : 0;
+    const yesterdayAvailableRooms = totalRooms - yesterdayOccupiedRooms;
+    const yesterdayAvailabilityPercentage = totalRooms > 0 ? Math.round((yesterdayAvailableRooms / totalRooms) * 100) : 0;
+    const availabilityChange = calculateChange(availabilityPercentage, yesterdayAvailabilityPercentage);
 
     // Recent bookings
     const recentBookings = await Booking.find()
@@ -78,10 +146,26 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
 
     res.json({
       stats: {
-        todayArrivals,
-        availableRooms,
-        totalGuests: todayGuests[0]?.total || 0,
-        occupancyRate: `${occupancyRate}%`
+        todayArrivals: {
+          value: todayArrivals,
+          change: arrivalsChange.change,
+          changeType: arrivalsChange.changeType
+        },
+        availableRooms: {
+          value: availableRooms,
+          change: availabilityChange.change,
+          changeType: availabilityChange.changeType
+        },
+        totalGuests: {
+          value: todayGuestsCount,
+          change: guestsChange.change,
+          changeType: guestsChange.changeType
+        },
+        occupancyRate: {
+          value: `${occupancyRate}%`,
+          change: occupancyChange.change,
+          changeType: occupancyChange.changeType
+        }
       },
       recentBookings,
       monthlyRevenue: monthlyRevenue[0]?.total || 0,
