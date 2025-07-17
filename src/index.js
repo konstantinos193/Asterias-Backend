@@ -19,6 +19,9 @@ const paymentRoutes = require('./routes/payments');
 const bookingcomWebhookRoutes = require('./routes/bookingcom.webhook');
 const imagesRoutes = require('./routes/images');
 
+// Settings middleware
+const { checkMaintenanceMode, attachSettings } = require('./middleware/settings');
+
 // Middleware
 app.use(helmet());
 app.use(cors({
@@ -62,6 +65,10 @@ app.get('/', (req, res) => {
     }
   });
 });
+
+// Apply settings middleware
+app.use(attachSettings);
+app.use(checkMaintenanceMode);
 
 // Routes
 app.use('/api/auth', authRoutes);

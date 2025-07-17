@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Booking = require('../models/Booking');
 const Room = require('../models/Room');
 const Contact = require('../models/Contact');
+const Settings = require('../models/Settings');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -268,15 +269,43 @@ router.get('/analytics', authenticateToken, requireAdmin, async (req, res) => {
       }
     ]);
 
+    // Provide default values for empty data
+    const defaultBookingStats = {
+      totalBookings: 0,
+      confirmedBookings: 0,
+      cancelledBookings: 0,
+      checkedInBookings: 0,
+      checkedOutBookings: 0,
+      totalRevenue: 0,
+      averageBookingValue: 0,
+      totalGuests: 0,
+      totalNights: 0
+    };
+
+    const defaultLeadTimeAnalysis = {
+      averageLeadTime: 0,
+      minLeadTime: 0,
+      maxLeadTime: 0
+    };
+
+    const defaultGuestDemographics = {
+      totalAdults: 0,
+      totalChildren: 0,
+      averageGroupSize: 0,
+      familyBookings: 0,
+      coupleBookings: 0,
+      soloBookings: 0
+    };
+
     res.json({
       dateRange: { start, end },
       totalRooms: totalRooms[0]?.totalRooms || 0,
-      bookingStatistics: bookingStats[0] || {},
+      bookingStatistics: bookingStats[0] || defaultBookingStats,
       bookingTrends,
       roomPerformance,
-      leadTimeAnalysis: leadTimeAnalysis[0] || {},
+      leadTimeAnalysis: leadTimeAnalysis[0] || defaultLeadTimeAnalysis,
       occupancyData,
-      guestDemographics: guestDemographics[0] || {},
+      guestDemographics: guestDemographics[0] || defaultGuestDemographics,
       cancellationRate,
       averageDailyRate: adrData[0]?.averageDailyRate || 0
     });
@@ -990,6 +1019,180 @@ router.get('/stats', authenticateToken, requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('System stats error:', error);
     res.status(500).json({ error: 'Failed to get system statistics' });
+  }
+});
+
+// ===== SETTINGS MANAGEMENT =====
+
+// Get all settings
+router.get('/settings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const settings = await Settings.getInstance();
+    res.json({
+      success: true,
+      data: settings
+    });
+  } catch (error) {
+    console.error('Error getting settings:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to get settings' 
+    });
+  }
+});
+
+// Update settings
+router.put('/settings', 
+  authenticateToken, 
+  requireAdmin,
+  [
+    // Validation rules
+    body('checkInTime').optional().matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('Invalid check-in time format'),
+    body('checkOutTime').optional().matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('Invalid check-out time format'),
+    body('minAdvanceBooking').optional().isInt({ min: 0, max: 365 }).withMessage('Min advance booking must be 0-365 days'),
+    body('maxAdvanceBooking').optional().isInt({ min: 1, max: 999 }).withMessage('Max advance booking must be 1-999 days'),
+    body('cancellationPolicy').optional().isInt({ min: 0, max: 168 }).withMessage('Cancellation policy must be 0-168 hours'),
+    body('taxRate').optional().isFloat({ min: 0, max: 30 }).withMessage('Tax rate must be 0-30%'),
+    body('directBookingDiscount').optional().isInt({ min: 0, max: 25 }).withMessage('Direct booking discount must be 0-25%'),
+    body('reminderHours').optional().isInt({ min: 1, max: 168 }).withMessage('Reminder hours must be 1-168'),
+    body('sessionTimeout').optional().isInt({ min: 30, max: 480 }).withMessage('Session timeout must be 30-480 minutes'),
+    body('maxConcurrentSessions').optional().isInt({ min: 1, max: 10 }).withMessage('Max concurrent sessions must be 1-10'),
+    body('itemsPerPage').optional().isIn([10, 20, 50, 100]).withMessage('Items per page must be 10, 20, 50, or 100'),
+    body('currency').optional().isIn(['EUR', 'USD', 'GBP']).withMessage('Currency must be EUR, USD, or GBP'),
+    body('backupFrequency').optional().isIn(['daily', 'weekly', 'monthly']).withMessage('Backup frequency must be daily, weekly, or monthly')
+  ],
+  async (req, res) => {
+    try {
+      // Check validation errors
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation failed',
+          details: errors.array()
+        });
+      }
+
+      const settings = await Settings.getInstance();
+      
+      // Update only provided fields
+      const allowedFields = [
+        'checkInTime', 'checkOutTime', 'minAdvanceBooking', 'maxAdvanceBooking', 
+        'cancellationPolicy', 'overbookingAllowed', 'currency', 'taxRate', 
+        'automaticPricing', 'directBookingDiscount', 'itemsPerPage',
+        'emailNotifications', 'smsNotifications', 'bookingConfirmations', 
+        'reminderNotifications', 'reminderHours', 'lowInventoryAlerts', 
+        'newBookingAlerts', 'sessionTimeout', 'requireTwoFA', 'autoBackup', 
+        'backupFrequency', 'maintenanceMode', 'bookingComIntegration', 
+        'airbnbIntegration', 'expediaIntegration', 'maxConcurrentSessions', 
+        'passwordComplexity', 'auditLogging'
+      ];
+
+      let updated = false;
+      for (const field of allowedFields) {
+        if (req.body.hasOwnProperty(field)) {
+          settings[field] = req.body[field];
+          updated = true;
+        }
+      }
+
+      if (!updated) {
+        return res.status(400).json({
+          success: false,
+          error: 'No valid fields provided for update'
+        });
+      }
+
+      await settings.save();
+
+      // Log the settings change for audit
+      if (settings.auditLogging) {
+        console.log(`Settings updated by admin ${req.user.id}:`, {
+          adminId: req.user.id,
+          changes: Object.keys(req.body),
+          timestamp: new Date()
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Settings updated successfully',
+        data: settings
+      });
+
+    } catch (error) {
+      console.error('Error updating settings:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to update settings' 
+      });
+    }
+  }
+);
+
+// Get specific setting
+router.get('/settings/:key', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { key } = req.params;
+    const value = await Settings.getSetting(key);
+    
+    if (value === undefined) {
+      return res.status(404).json({
+        success: false,
+        error: 'Setting not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: { [key]: value }
+    });
+  } catch (error) {
+    console.error('Error getting setting:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to get setting' 
+    });
+  }
+});
+
+// Update specific setting
+router.patch('/settings/:key', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { key } = req.params;
+    const { value } = req.body;
+
+    if (value === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'Value is required'
+      });
+    }
+
+    const settings = await Settings.updateSetting(key, value);
+
+    // Log the settings change for audit
+    if (settings.auditLogging) {
+      console.log(`Setting ${key} updated by admin ${req.user.id}:`, {
+        adminId: req.user.id,
+        setting: key,
+        value: value,
+        timestamp: new Date()
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Setting ${key} updated successfully`,
+      data: { [key]: value }
+    });
+
+  } catch (error) {
+    console.error('Error updating setting:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to update setting' 
+    });
   }
 });
 
