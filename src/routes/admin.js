@@ -124,6 +124,7 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
     // Recent bookings
     const recentBookings = await Booking.find()
       .populate('room', 'name')
+      .populate('user', 'name email')
       .sort({ createdAt: -1 })
       .limit(5);
 
@@ -176,6 +177,61 @@ router.get('/dashboard', authenticateToken, requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('Dashboard error:', error);
     res.status(500).json({ error: 'Failed to get dashboard data' });
+  }
+});
+
+// Get all bookings (admin only) - proxy to bookings route
+router.get('/bookings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const Booking = require('../models/Booking');
+    const {
+      status,
+      paymentStatus,
+      checkIn,
+      checkOut,
+      guestEmail,
+      page = 1,
+      limit = 20,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    // Build filter
+    const filter = {};
+    if (status) filter.bookingStatus = status;
+    if (paymentStatus) filter.paymentStatus = paymentStatus;
+    if (checkIn) filter.checkIn = { $gte: new Date(checkIn) };
+    if (checkOut) filter.checkOut = { $lte: new Date(checkOut) };
+    if (guestEmail) filter['guestInfo.email'] = { $regex: guestEmail, $options: 'i' };
+
+    // Build sort
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    // Pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const bookings = await Booking.find(filter)
+      .populate('room', 'name')
+      .populate('user', 'name email')
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await Booking.countDocuments(filter);
+
+    res.json({
+      bookings,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('Get all bookings error:', error);
+    res.status(500).json({ error: 'Failed to get bookings' });
   }
 });
 
