@@ -344,4 +344,84 @@ router.get('/stats/overview', authenticateToken, requireAdmin, async (req, res) 
   }
 });
 
+// Get availability for a room type and date range
+router.get('/availability', async (req, res) => {
+  try {
+    const { roomId, checkIn, checkOut } = req.query;
+    if (!roomId || !checkIn || !checkOut) {
+      return res.status(400).json({ error: 'roomId, checkIn, and checkOut are required' });
+    }
+    const room = await Room.findById(roomId);
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+    const booked = await Booking.countDocuments({
+      roomId,
+      bookingStatus: { $nin: ['CANCELLED'] },
+      $or: [
+        { checkIn: { $lt: new Date(checkOut) }, checkOut: { $gt: new Date(checkIn) } },
+      ]
+    });
+    const available = Math.max(room.totalRooms - booked, 0);
+    res.json({
+      available,
+      totalRooms: room.totalRooms,
+      booked
+    });
+  } catch (error) {
+    console.error('Availability check error:', error);
+    res.status(500).json({ error: 'Failed to check availability' });
+  }
+});
+
+// Get calendar availability for a room type and date range
+router.get('/calendar-availability', async (req, res) => {
+  try {
+    const { roomId, start, end } = req.query;
+    if (!roomId || !start || !end) {
+      return res.status(400).json({ error: 'roomId, start, and end are required' });
+    }
+    const room = await Room.findById(roomId);
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    // Get all bookings for this room type that overlap with the range
+    const bookings = await Booking.find({
+      roomId,
+      bookingStatus: { $nin: ['CANCELLED'] },
+      $or: [
+        { checkIn: { $lt: new Date(end) }, checkOut: { $gt: new Date(start) } }
+      ]
+    });
+
+    // Build a map of date -> number of bookings
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    const days = [];
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      days.push(new Date(d));
+    }
+
+    const availability = {};
+    for (const day of days) {
+      const dayStr = day.toISOString().slice(0, 10);
+      // Count bookings that overlap this day
+      const booked = bookings.filter(b =>
+        new Date(b.checkIn) < day && new Date(b.checkOut) > day
+      ).length;
+      availability[dayStr] = Math.max(room.totalRooms - booked, 0);
+    }
+
+    res.json({
+      roomId,
+      totalRooms: room.totalRooms,
+      availability
+    });
+  } catch (error) {
+    console.error('Calendar availability error:', error);
+    res.status(500).json({ error: 'Failed to get calendar availability' });
+  }
+});
+
 module.exports = router; 
