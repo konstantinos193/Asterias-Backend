@@ -9,13 +9,21 @@ let transporter = null;
 // Initialize email transporter
 function initializeEmailTransporter() {
   // Configure for Gmail/Google Workspace (most common for small businesses)
-  transporter = nodemailer.createTransport({
+  const emailConfig = {
     service: 'gmail',
     auth: {
       user: process.env.EMAIL_USER, // your-email@gmail.com
-      pass: process.env.EMAIL_APP_PASSWORD // App-specific password
+      pass: process.env.EMAIL_APP_PASSWORD || process.env.EMAIL_PASSWORD // App password or regular password
     }
-  });
+  };
+
+  // If no app password, try with regular password and less secure app access
+  if (!process.env.EMAIL_APP_PASSWORD && process.env.EMAIL_PASSWORD) {
+    console.log('⚠️  Using regular password - consider enabling 2FA and using app password for better security');
+    emailConfig.auth.pass = process.env.EMAIL_PASSWORD;
+  }
+
+  transporter = nodemailer.createTransport(emailConfig);
 
   // Alternative: SMTP configuration for other providers
   /*
@@ -45,11 +53,17 @@ async function getAdminEmails() {
     }));
   } catch (error) {
     console.error('Error fetching admin emails:', error);
-    // Fallback to environment variable
-    return process.env.ADMIN_EMAIL ? [{ 
-      email: process.env.ADMIN_EMAIL, 
-      name: 'Admin' 
-    }] : [];
+    // Fallback to environment variable (optional)
+    if (process.env.ADMIN_EMAIL) {
+      console.log('📧 Using fallback ADMIN_EMAIL from environment');
+      return [{ 
+        email: process.env.ADMIN_EMAIL, 
+        name: 'Admin (Fallback)' 
+      }];
+    }
+    
+    console.log('⚠️  No admin emails found - neither in database nor ADMIN_EMAIL env var');
+    return [];
   }
 }
 

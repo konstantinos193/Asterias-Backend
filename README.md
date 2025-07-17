@@ -117,9 +117,19 @@ JWT_SECRET=your-super-secure-jwt-secret-key
 # Payment Processing
 STRIPE_SECRET_KEY=sk_test_... (or sk_live_... for production)
 
-# Email System
-EMAIL_USER=your-business@gmail.com
-EMAIL_APP_PASSWORD=your-gmail-app-password
+# Email System - Choose ONE option:
+
+# OPTION 1: App Password (RECOMMENDED - more secure)
+EMAIL_USER=asterias.apartmentskoronisia@gmail.com
+EMAIL_APP_PASSWORD=your-16-digit-app-password
+
+# OPTION 2: Regular Password (requires "Less secure app access")
+EMAIL_USER=asterias.apartmentskoronisia@gmail.com
+EMAIL_PASSWORD=your-gmail-password
+
+# Admin email (OPTIONAL - fallback only)
+# System sends to ALL admin users in database first
+# This is only used if database fails or no admin users exist
 ADMIN_EMAIL=asterias.apartmentskoronisia@gmail.com
 
 # Application URLs
