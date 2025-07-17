@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { sendArrivalReminder, checkLowInventory } = require('./emailService');
+const { sendArrivalReminder, checkLowInventory, sendEmailToAllAdmins } = require('./emailService');
 const { getSettings } = require('../middleware/settings');
 const Booking = require('../models/Booking');
 const Room = require('../models/Room');

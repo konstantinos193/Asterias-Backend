@@ -120,7 +120,7 @@ STRIPE_SECRET_KEY=sk_test_... (or sk_live_... for production)
 # Email System
 EMAIL_USER=your-business@gmail.com
 EMAIL_APP_PASSWORD=your-gmail-app-password
-ADMIN_EMAIL=admin@asteriashome.gr
+ADMIN_EMAIL=asterias.apartmentskoronisia@gmail.com
 
 # Application URLs
 FRONTEND_URL=http://localhost:3000
@@ -156,8 +156,9 @@ BOOKINGCOM_API_PASSWORD=your-booking-api-password
 - **Arrival Reminder**: Sent 24 hours before check-in (configurable)
 
 #### Admin Emails (always in Greek)
-- **New Booking Alert**: Immediate notification with customer language noted
-- **Low Inventory Alert**: When availability drops below threshold
+- **New Booking Alert**: Sent to ALL registered admin users with customer language noted
+- **Low Inventory Alert**: Sent to ALL registered admin users when availability drops below threshold
+- **Multi-Admin Support**: Automatically sends to all users with role 'ADMIN' and email notifications enabled
 
 ### Testing Email System
 
@@ -174,6 +175,9 @@ const { sendTestEmail } = require('./src/services/emailService');
 sendTestEmail('arrivalReminder', 'de').then(console.log);
 sendTestEmail('newBookingAlert', 'el').then(console.log);
 "
+
+# Test multi-admin email system
+node test-admin-emails.js
 ```
 
 ## 🔄 Scheduled Tasks
@@ -252,6 +256,39 @@ DELETE /api/offers/:id         # Delete offer (admin)
 GET    /api/contact            # List contact messages (admin)
 POST   /api/contact            # Submit contact form
 ```
+
+## 👥 Admin User Management
+
+### Adding Admin Users
+
+To add additional admin users who will receive booking notifications:
+
+```bash
+# Using MongoDB shell or your admin interface
+db.users.insertOne({
+  name: "Admin Name",
+  email: "admin@example.com", 
+  password: "hashed_password", // Use bcrypt to hash
+  role: "ADMIN",
+  preferences: {
+    notifications: {
+      email: true,
+      sms: false
+    }
+  }
+});
+```
+
+### Admin Email Notifications
+
+All users with:
+- `role: "ADMIN"` 
+- `preferences.notifications.email: true`
+
+Will automatically receive:
+- New booking alerts
+- Low inventory warnings
+- System notifications
 
 ## 🗄️ Database Models
 
@@ -457,6 +494,7 @@ node check-bookings.js # Validate bookings
 # Testing
 node test-backend.js  # Test server
 node test-mongodb.js  # Test database
+node test-admin-emails.js # Test multi-admin email system
 ```
 
 ## 🔧 Troubleshooting
@@ -491,7 +529,7 @@ stripe listen --forward-to localhost:3001/api/webhooks/stripe
 ## 📞 Support
 
 ### Contact Information
-- **Email**: info@asteriashome.gr
+- **Email**: asterias.apartmentskoronisia@gmail.com
 - **Location**: Koronisia, Arta 48100, Greece
 - **Technical Support**: GitHub Issues
 

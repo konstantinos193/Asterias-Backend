@@ -18,7 +18,9 @@ const emailTranslations = {
       checkIn: "Check-in",
       checkOut: "Check-out",
       questionsText: "Για οποιαδήποτε ερώτηση, επικοινωνήστε μαζί μας:",
+      contactInfo: "📧 asterias.apartmentskoronisia@gmail.com | 📞 +30 6972705881",
       lookingForward: "Ανυπομονούμε να σας φιλοξενήσουμε!",
+      doNotReply: "⚠️ Αυτό είναι αυτόματο email - παρακαλώ μην απαντήσετε σε αυτή τη διεύθυνση",
       footer: "Asterias Homes - Παραδοσιακά διαμερίσματα στην Κορωνησία Άρτας"
     },
     
@@ -37,7 +39,9 @@ const emailTranslations = {
       keyPickup: "Παραλαβή Κλειδιών",
       keyPickupText: "Παρακαλώ επικοινωνήστε μαζί μας 30 λεπτά πριν την άφιξή σας",
       phone: "Τηλέφωνο",
+      contactInfo: "📧 asterias.apartmentskoronisia@gmail.com | 📞 +30 6972705881",
       goodTrip: "Καλό ταξίδι και ανυπομονούμε να σας φιλοξενήσουμε!",
+      doNotReply: "⚠️ Αυτό είναι αυτόματο email - παρακαλώ μην απαντήσετε σε αυτή τη διεύθυνση",
       footer: "Asterias Homes - Κορωνησία, Άρτα"
     },
 
@@ -89,7 +93,9 @@ const emailTranslations = {
       checkIn: "Check-in",
       checkOut: "Check-out",
       questionsText: "For any questions, please contact us:",
+      contactInfo: "📧 asterias.apartmentskoronisia@gmail.com | 📞 +30 6972705881",
       lookingForward: "We look forward to hosting you!",
+      doNotReply: "⚠️ This is an automatic email - please do not reply to this address",
       footer: "Asterias Homes - Traditional apartments in Koronisia, Arta"
     },
     
@@ -108,7 +114,9 @@ const emailTranslations = {
       keyPickup: "Key Pickup",
       keyPickupText: "Please contact us 30 minutes before your arrival",
       phone: "Phone",
+      contactInfo: "📧 asterias.apartmentskoronisia@gmail.com | 📞 +30 6972705881",
       goodTrip: "Have a good trip and we look forward to hosting you!",
+      doNotReply: "⚠️ This is an automatic email - please do not reply to this address",
       footer: "Asterias Homes - Koronisia, Arta"
     },
 
@@ -160,7 +168,9 @@ const emailTranslations = {
       checkIn: "Check-in",
       checkOut: "Check-out",
       questionsText: "Bei Fragen kontaktieren Sie uns bitte:",
+      contactInfo: "📧 asterias.apartmentskoronisia@gmail.com | 📞 +30 6972705881",
       lookingForward: "Wir freuen uns darauf, Sie zu beherbergen!",
+      doNotReply: "⚠️ Dies ist eine automatische E-Mail - bitte antworten Sie nicht an diese Adresse",
       footer: "Asterias Homes - Traditionelle Apartments in Koronisia, Arta"
     },
     
@@ -179,7 +189,9 @@ const emailTranslations = {
       keyPickup: "Schlüsselübergabe",
       keyPickupText: "Bitte kontaktieren Sie uns 30 Minuten vor Ihrer Ankunft",
       phone: "Telefon",
+      contactInfo: "📧 asterias.apartmentskoronisia@gmail.com | 📞 +30 6972705881",
       goodTrip: "Gute Reise und wir freuen uns darauf, Sie zu beherbergen!",
+      doNotReply: "⚠️ Dies ist eine automatische E-Mail - bitte antworten Sie nicht an diese Adresse",
       footer: "Asterias Homes - Koronisia, Arta"
     },
 

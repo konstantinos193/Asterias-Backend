@@ -1,6 +1,7 @@
 const nodemailer = require('nodemailer');
 const { getSettings } = require('../middleware/settings');
 const { t } = require('../translations/emailTranslations');
+const User = require('../models/User');
 
 // Email transporter - configure based on your email provider
 let transporter = null;
@@ -8,7 +9,7 @@ let transporter = null;
 // Initialize email transporter
 function initializeEmailTransporter() {
   // Configure for Gmail/Google Workspace (most common for small businesses)
-  transporter = nodemailer.createTransporter({
+  transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
       user: process.env.EMAIL_USER, // your-email@gmail.com
@@ -18,7 +19,7 @@ function initializeEmailTransporter() {
 
   // Alternative: SMTP configuration for other providers
   /*
-  transporter = nodemailer.createTransporter({
+  transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: process.env.SMTP_PORT || 587,
     secure: false,
@@ -28,6 +29,28 @@ function initializeEmailTransporter() {
     }
   });
   */
+}
+
+// Get all admin user emails
+async function getAdminEmails() {
+  try {
+    const adminUsers = await User.find({ 
+      role: 'ADMIN',
+      'preferences.notifications.email': true // Only send to admins who want email notifications
+    }).select('email name');
+    
+    return adminUsers.map(admin => ({
+      email: admin.email,
+      name: admin.name
+    }));
+  } catch (error) {
+    console.error('Error fetching admin emails:', error);
+    // Fallback to environment variable
+    return process.env.ADMIN_EMAIL ? [{ 
+      email: process.env.ADMIN_EMAIL, 
+      name: 'Admin' 
+    }] : [];
+  }
 }
 
 // Email templates
@@ -61,14 +84,19 @@ const emailTemplates = {
         </div>
         
         <p>Για οποιαδήποτε ερώτηση, επικοινωνήστε μαζί μας:</p>
-        <p>📧 info@asteriashome.gr</p>
-        <p>📞 +30 26810 XXXXX</p>
+        <p>📧 asterias.apartmentskoronisia@gmail.com</p>
+        <p>📞 +30 6972705881</p>
         
         <p>Ανυπομονούμε να σας φιλοξενήσουμε!</p>
         
-        <p style="color: #666; font-size: 14px; margin-top: 30px;">
-          Asterias Homes - Παραδοσιακά διαμερίσματα στην Κορωνησία Άρτας
-        </p>
+        <div style="border-top: 1px solid #e5e5e5; margin-top: 30px; padding-top: 20px;">
+          <p style="color: #888; font-size: 12px; margin-bottom: 10px;">
+            ⚠️ Αυτό είναι αυτόματο email - παρακαλώ μην απαντήσετε σε αυτή τη διεύθυνση
+          </p>
+          <p style="color: #666; font-size: 14px;">
+            Asterias Homes - Παραδοσιακά διαμερίσματα στην Κορωνησία Άρτας
+          </p>
+        </div>
       </div>
     `,
     text: (data) => `
@@ -87,7 +115,9 @@ const emailTemplates = {
       
       Διεύθυνση: Κορωνησία, Άρτα 48100
       
-      info@asteriashome.gr | +30 26810 XXXXX
+      asterias.apartmentskoronisia@gmail.com | +30 6972705881
+      
+      ⚠️ Αυτό είναι αυτόματο email - παρακαλώ μην απαντήσετε σε αυτή τη διεύθυνση
     `
   },
 
@@ -114,14 +144,20 @@ const emailTemplates = {
           <h4>Σημαντικές Πληροφορίες</h4>
           <p><strong>Διεύθυνση:</strong> Κορωνησία, Άρτα 48100</p>
           <p><strong>Παραλαβή Κλειδιών:</strong> Παρακαλώ επικοινωνήστε μαζί μας 30 λεπτά πριν την άφιξή σας</p>
-          <p><strong>Τηλέφωνο:</strong> +30 26810 XXXXX</p>
+          <p><strong>Τηλέφωνο:</strong> +30 6972705881</p>
+          <p><strong>Email:</strong> asterias.apartmentskoronisia@gmail.com</p>
         </div>
         
         <p>Καλό ταξίδι και ανυπομονούμε να σας φιλοξενήσουμε!</p>
         
-        <p style="color: #666; font-size: 14px; margin-top: 30px;">
-          Asterias Homes - Κορωνησία, Άρτα
-        </p>
+        <div style="border-top: 1px solid #e5e5e5; margin-top: 30px; padding-top: 20px;">
+          <p style="color: #888; font-size: 12px; margin-bottom: 10px;">
+            ⚠️ Αυτό είναι αυτόματο email - παρακαλώ μην απαντήσετε σε αυτή τη διεύθυνση
+          </p>
+          <p style="color: #666; font-size: 14px;">
+            Asterias Homes - Κορωνησία, Άρτα
+          </p>
+        </div>
       </div>
     `,
     text: (data) => `
@@ -137,9 +173,12 @@ const emailTemplates = {
       Κωδικός: ${data.bookingId}
       
       Διεύθυνση: Κορωνησία, Άρτα 48100
-      Τηλέφωνο: +30 26810 XXXXX
+      Τηλέφωνο: +30 6972705881
+      Email: asterias.apartmentskoronisia@gmail.com
       
       Παρακαλώ καλέστε μας 30 λεπτά πριν την άφιξή σας.
+      
+      ⚠️ Αυτό είναι αυτόματο email - παρακαλώ μην απαντήσετε σε αυτή τη διεύθυνση
     `
   },
 
@@ -161,6 +200,7 @@ const emailTemplates = {
           <p><strong>Αναχώρηση:</strong> ${new Date(data.checkOut).toLocaleDateString('el-GR')}</p>
           <p><strong>Επισκέπτες:</strong> ${data.guests}</p>
           <p><strong>Συνολικό:</strong> ${data.totalPrice}€</p>
+          ${data.language && data.language !== 'el' ? `<p><strong>Γλώσσα Πελάτη:</strong> ${data.language.toUpperCase()}</p>` : ''}
         </div>
         
         <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
@@ -187,6 +227,7 @@ const emailTemplates = {
       Αναχώρηση: ${new Date(data.checkOut).toLocaleDateString('el-GR')}
       Επισκέπτες: ${data.guests}
       Συνολικό: ${data.totalPrice}€
+      ${data.language && data.language !== 'el' ? `Γλώσσα Πελάτη: ${data.language.toUpperCase()}` : ''}
       
       Κρατήθηκε: ${new Date(data.createdAt).toLocaleString('el-GR')}
     `
@@ -274,6 +315,50 @@ async function sendEmail(to, template, data, customSubject = null) {
 
   } catch (error) {
     console.error('❌ Failed to send email:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Send email to all admin users
+async function sendEmailToAllAdmins(template, data, customSubject = null) {
+  try {
+    // Get all admin emails
+    const adminEmails = await getAdminEmails();
+    if (adminEmails.length === 0) {
+      console.log('No admin emails found for notification');
+      return { success: false, reason: 'No admin emails configured' };
+    }
+
+    console.log(`📧 Sending ${template} to ${adminEmails.length} admin(s)`);
+
+    // Send to all admin users
+    const results = [];
+    for (const admin of adminEmails) {
+      try {
+        const result = await sendEmail(
+          admin.email,
+          template,
+          data,
+          customSubject
+        );
+        results.push({ admin: admin.email, name: admin.name, ...result });
+        console.log(`✅ Email sent to admin: ${admin.name} (${admin.email})`);
+      } catch (error) {
+        console.error(`❌ Failed to send email to ${admin.name} (${admin.email}):`, error);
+        results.push({ admin: admin.email, name: admin.name, success: false, error: error.message });
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    return { 
+      success: successCount > 0, 
+      results: results,
+      adminCount: adminEmails.length,
+      successCount: successCount
+    };
+
+  } catch (error) {
+    console.error('❌ Failed to send email to admins:', error);
     return { success: false, error: error.message };
   }
 }
