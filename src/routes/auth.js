@@ -105,6 +105,15 @@ router.post('/login', [
     const token = generateToken(user._id);
     const refreshToken = generateRefreshToken(user._id);
 
+    // After successful login, set the cookie
+    res.cookie('authToken', token, {
+      httpOnly: true,
+      secure: true, // required for SameSite=None
+      sameSite: 'none',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 1 week
+    });
+
     console.log('Login successful for user:', email);
 
     res.json({
