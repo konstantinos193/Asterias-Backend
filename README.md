@@ -1,337 +1,506 @@
-# Asterias Homes - Backend API
+# Asterias Homes Backend API
 
-Welcome to the backend API for **Asterias Homes**, a comprehensive hotel management system built with Node.js, Express, and MongoDB. This robust API powers the complete hotel operations platform, handling everything from guest management to advanced analytics and reporting.
+A robust Node.js/Express backend server for the Asterias Homes apartment rental system. Features multilingual email automation, Stripe payment processing, MongoDB integration, and comprehensive admin functionality.
 
-## ✨ Key Features
+## 🏗️ Architecture Overview
 
-### Core Functionality
-- **Secure Authentication**: JWT-based authentication with role-based access control (Admin/User)
-- **Comprehensive Room Management**: Full CRUD operations for rooms with features, amenities, and availability tracking
-- **Advanced Booking System**: Complete booking workflow with status management and guest information
-- **Stripe Payment Integration**: Secure payment processing with payment intent creation
-- **Guest Management**: Detailed guest profiles with booking history and contact information
+### Core Technologies
+- **Node.js**: Runtime environment
+- **Express.js**: Web application framework
+- **MongoDB**: Document database with Mongoose ODM
+- **JWT**: Authentication and authorization
+- **Stripe**: Payment processing
+- **Nodemailer**: Email delivery system
+- **node-cron**: Scheduled task automation
 
-### Admin Dashboard Features
-- **Real-time Dashboard**: Live statistics with occupancy rates, revenue tracking, and daily metrics
-- **Booking Management**: Complete booking oversight with status updates and filtering
-- **Room Administration**: Room creation, editing, and availability management
-- **Special Offers**: Dynamic offer creation with discount management and room selection
-- **Guest Database**: Comprehensive guest management with search and filtering capabilities
+### Key Features
+- **RESTful API**: Clean, documented endpoints
+- **Multilingual Email System**: Automated emails in Greek, English, German
+- **Payment Processing**: Secure Stripe integration
+- **Admin Dashboard**: Comprehensive management interface
+- **Real-time Analytics**: Booking and revenue reporting
+- **Automated Tasks**: Email reminders and inventory alerts
 
-### Analytics & Reporting
-- **Comprehensive Analytics**: Detailed booking statistics, revenue analysis, and occupancy tracking
-- **Performance Metrics**: Room performance analysis, lead time insights, and cancellation rates
-- **Revenue Reports**: Monthly revenue breakdowns, payment method analysis, and ADR calculations
-- **Guest Demographics**: Family/couple/solo booking analysis and group size metrics
-- **Data Export**: Excel export functionality for all reports with Greek localization
-
-### Integration Features
-- **Booking.com Integration**: Webhook support for external booking platform synchronization
-- **Image Management**: Cloudinary integration for efficient image handling and storage
-- **Contact Management**: Contact form handling with admin notifications
-- **Multi-language Support**: Greek and English content management
-
-## 🛠️ Tech Stack
-
-- **Runtime**: [Node.js](https://nodejs.org/) (v18 or later)
-- **Framework**: [Express.js](https://expressjs.com/)
-- **Database**: [MongoDB](https://www.mongodb.com/) with [Mongoose](https://mongoosejs.com/)
-- **Authentication**: [JSON Web Tokens (JWT)](https://jwt.io/)
-- **Payments**: [Stripe](https://stripe.com/)
-- **Image Storage**: [Cloudinary](https://cloudinary.com/)
-- **Password Hashing**: [bcryptjs](https://github.com/dcodeIO/bcrypt.js)
-- **Validation**: [express-validator](https://express-validator.github.io/)
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) (v18 or later)
-- [MongoDB](https://www.mongodb.com/try/download/community) installed and running
-- A [Stripe](https://stripe.com/) account for payment processing
-- A [Cloudinary](https://cloudinary.com/) account for image uploads (optional)
-
-### 1. Navigate to the Backend Directory
-
-```bash
-cd backend
-```
-
-### 2. Install Dependencies
-
-```bash
-npm install
-```
-
-### 3. Set Up Environment Variables
-
-Copy the `env.example` file to a new `.env` file and fill in the required values.
-
-```bash
-cp env.example .env
-```
-
-Your `.env` file should include:
-
-```env
-# Server Configuration
-PORT=3001
-NODE_ENV=development
-
-# Database Configuration
-MONGODB_URI=mongodb://localhost:27017/asterias-homes
-
-# JWT Secrets
-JWT_SECRET=your_strong_jwt_secret_key
-JWT_REFRESH_SECRET=your_strong_refresh_secret_key
-
-# Stripe API Keys
-STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key
-
-# Frontend URL for CORS
-FRONTEND_URL=http://localhost:3000
-
-# Cloudinary Configuration (Optional)
-CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
-CLOUDINARY_API_KEY=your_cloudinary_api_key
-CLOUDINARY_API_SECRET=your_cloudinary_api_secret
-
-# Booking.com Integration (Optional)
-BOOKINGCOM_WEBHOOK_SECRET=your_bookingcom_webhook_secret
-```
-
-### 4. Initialize Admin User
-
-Create the initial admin user:
-
-```bash
-node create-admin.js
-```
-
-This will create an admin user with:
-- Email: admin@asterias.gr
-- Password: admin123
-- Role: ADMIN
-
-### 5. Seed the Database (Optional)
-
-To populate the database with sample rooms and data:
-
-```bash
-node src/seed.js
-```
-
-### 6. Start the Development Server
-
-```bash
-npm run dev
-```
-
-The API will be running at [http://localhost:3001](http://localhost:3001).
-
-## 📚 API Endpoints
-
-### Authentication
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `POST` | `/api/auth/register` | Register new user | Public |
-| `POST` | `/api/auth/login` | User login | Public |
-| `POST` | `/api/auth/logout` | User logout | Private |
-| `GET` | `/api/auth/profile` | Get user profile | Private |
-| `PUT` | `/api/auth/profile` | Update user profile | Private |
-| `POST` | `/api/auth/refresh` | Refresh JWT token | Private |
-
-### Rooms
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `GET` | `/api/rooms` | Get all rooms | Public |
-| `GET` | `/api/rooms/:id` | Get room by ID | Public |
-| `GET` | `/api/rooms/:id/availability` | Check room availability | Public |
-
-### Bookings
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `POST` | `/api/bookings` | Create new booking | Private |
-| `GET` | `/api/bookings` | Get user bookings | Private |
-| `GET` | `/api/bookings/:id` | Get booking details | Private |
-| `PUT` | `/api/bookings/:id` | Update booking | Private |
-| `DELETE` | `/api/bookings/:id` | Cancel booking | Private |
-
-### Payments
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `POST` | `/api/payments/create-payment-intent` | Create Stripe payment intent | Private |
-| `POST` | `/api/payments/confirm-payment` | Confirm payment | Private |
-
-### Offers
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `GET` | `/api/offers` | Get all active offers | Public |
-| `GET` | `/api/offers/:id` | Get offer details | Public |
-
-### Contact
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `POST` | `/api/contact` | Submit contact form | Public |
-
-### Admin - Dashboard
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `GET` | `/api/admin/dashboard` | Get dashboard statistics | Admin |
-| `GET` | `/api/admin/stats` | Get system statistics | Admin |
-
-### Admin - Bookings Management
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `GET` | `/api/admin/bookings` | Get all bookings with filters | Admin |
-| `PUT` | `/api/admin/bookings/:id` | Update booking status | Admin |
-| `DELETE` | `/api/admin/bookings/:id` | Cancel/delete booking | Admin |
-
-### Admin - Room Management
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `GET` | `/api/admin/rooms` | Get all rooms | Admin |
-| `POST` | `/api/admin/rooms` | Create new room | Admin |
-| `PUT` | `/api/admin/rooms/:id` | Update room | Admin |
-| `DELETE` | `/api/admin/rooms/:id` | Delete room | Admin |
-
-### Admin - User Management
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `GET` | `/api/admin/users` | Get all users with filters | Admin |
-| `GET` | `/api/admin/users/:id` | Get user details | Admin |
-| `PUT` | `/api/admin/users/:id` | Update user | Admin |
-| `DELETE` | `/api/admin/users/:id` | Delete user | Admin |
-| `POST` | `/api/admin/users/admin` | Create admin user | Admin |
-
-### Admin - Offers Management
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `GET` | `/api/admin/offers` | Get all offers | Admin |
-| `POST` | `/api/admin/offers` | Create new offer | Admin |
-| `PUT` | `/api/admin/offers/:id` | Update offer | Admin |
-| `DELETE` | `/api/admin/offers/:id` | Delete offer | Admin |
-
-### Admin - Analytics & Reports
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `GET` | `/api/admin/analytics` | Get comprehensive analytics | Admin |
-| `GET` | `/api/admin/revenue-reports` | Get revenue reports | Admin |
-
-### Webhooks
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| `POST` | `/api/bookingcom-webhooks` | Booking.com webhook handler | External |
-
-## 🔧 Database Models
-
-### User Model
-- Authentication and profile information
-- Role-based access control (ADMIN/USER)
-- Password hashing with bcrypt
-- JWT token management
-
-### Room Model
-- Complete room information with multilingual support
-- Features, amenities, and capacity management
-- Image gallery and pricing
-- Availability tracking
-
-### Booking Model
-- Comprehensive booking workflow
-- Guest information and special requests
-- Payment status and booking status tracking
-- Integration with external platforms
-
-### Offer Model
-- Dynamic special offers with discount management
-- Date ranges and room applicability
-- Status management (active/inactive)
-
-### Contact Model
-- Contact form submissions
-- Status tracking and admin notifications
-
-## 🏗️ Project Structure
+## 📁 Project Structure
 
 ```
 backend/
 ├── src/
-│   ├── index.js              # Main application entry point
-│   ├── models/               # Mongoose data models
-│   │   ├── User.js
-│   │   ├── Room.js
-│   │   ├── Booking.js
-│   │   ├── Offer.js
-│   │   └── Contact.js
-│   ├── routes/               # API route handlers
-│   │   ├── auth.js           # Authentication routes
-│   │   ├── rooms.js          # Room management
-│   │   ├── bookings.js       # Booking operations
-│   │   ├── admin.js          # Admin panel API
-│   │   ├── offers.js         # Special offers
-│   │   ├── contact.js        # Contact form
-│   │   └── payments.js       # Payment processing
-│   ├── middleware/           # Express middleware
-│   │   ├── auth.js           # JWT authentication
-│   │   └── apiKey.js         # API key validation
-│   └── services/             # Business logic services
-│       └── bookingcom.service.js
-├── create-admin.js           # Admin user creation script
-├── test-backend.js           # API testing utilities
-└── package.json
+│   ├── index.js                    # Main server entry point
+│   ├── models/                     # Mongoose database models
+│   │   ├── Booking.js             # Booking schema with language support
+│   │   ├── Room.js                # Room/apartment definitions
+│   │   ├── User.js                # Admin user management
+│   │   ├── Offer.js               # Special offers and discounts
+│   │   ├── Contact.js             # Contact form submissions
+│   │   └── Settings.js            # System configuration
+│   ├── routes/                     # API route handlers
+│   │   ├── admin.js               # Admin dashboard endpoints
+│   │   ├── auth.js                # Authentication routes
+│   │   ├── bookings.js            # Booking management
+│   │   ├── rooms.js               # Room/apartment API
+│   │   ├── offers.js              # Special offers
+│   │   ├── payments.js            # Stripe payment processing
+│   │   ├── contact.js             # Contact form handling
+│   │   ├── images.js              # Image serving
+│   │   └── bookingcom.webhook.js  # Third-party integrations
+│   ├── services/                   # Business logic services
+│   │   ├── emailService.js        # Multilingual email system
+│   │   ├── scheduledTasks.js      # Automated background tasks
+│   │   └── bookingcom.service.js  # Booking.com integration
+│   ├── middleware/                 # Express middleware
+│   │   ├── auth.js                # JWT authentication
+│   │   ├── apiKey.js              # API key validation
+│   │   └── settings.js            # Settings management
+│   └── translations/               # Email translations
+│       └── emailTranslations.js   # Multi-language templates
+├── test-backend.js                 # Backend connectivity tests
+├── test-mongodb.js                 # Database connection tests
+├── create-admin.js                 # Admin user creation script
+├── check-bookings.js               # Booking validation script
+├── package.json                    # Dependencies and scripts
+├── env.example                     # Environment template
+└── README.md                       # This file
 ```
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js 18+ and pnpm
+- MongoDB Atlas account
+- Stripe account
+- Gmail account for email sending
+
+### Installation
+
+1. **Install dependencies**
+   ```bash
+   cd backend
+   pnpm install
+   ```
+
+2. **Environment setup**
+   ```bash
+   cp env.example .env
+   # Edit .env with your configuration
+   ```
+
+3. **Create admin user**
+   ```bash
+   node create-admin.js
+   ```
+
+4. **Start the server**
+   ```bash
+   # Development
+   pnpm dev
+   
+   # Production
+   pnpm start
+   ```
+
+## ⚙️ Environment Variables
+
+### Required Configuration (.env)
+
+```env
+# Server Configuration
+NODE_ENV=development
+PORT=3001
+
+# Database
+MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/asterias-homes
+
+# Authentication
+JWT_SECRET=your-super-secure-jwt-secret-key
+
+# Payment Processing
+STRIPE_SECRET_KEY=sk_test_... (or sk_live_... for production)
+
+# Email System
+EMAIL_USER=your-business@gmail.com
+EMAIL_APP_PASSWORD=your-gmail-app-password
+ADMIN_EMAIL=admin@asteriashome.gr
+
+# Application URLs
+FRONTEND_URL=http://localhost:3000
+BACKEND_URL=http://localhost:3001
+
+# Optional: Third-party Integrations
+BOOKINGCOM_API_URL=https://api.booking.com/v1
+BOOKINGCOM_API_USER=your-booking-api-user
+BOOKINGCOM_API_PASSWORD=your-booking-api-password
+```
+
+### Email Setup (Gmail)
+
+1. **Create dedicated business Gmail account**
+2. **Enable 2-Factor Authentication**
+3. **Generate App Password**:
+   - Google Account → Security → 2-Step Verification → App passwords
+   - Select "Mail" and generate password
+4. **Update environment variables**
+
+## 📧 Multilingual Email System
+
+### Features
+- **3 Languages**: Greek (el), English (en), German (de)
+- **Smart Detection**: Language from booking data, URL path, Accept-Language header
+- **Professional Templates**: Responsive HTML emails with branding
+- **Automated Sending**: Booking confirmations, arrival reminders, admin alerts
+
+### Email Types
+
+#### Customer Emails (in customer's language)
+- **Booking Confirmation**: Sent immediately after successful booking
+- **Arrival Reminder**: Sent 24 hours before check-in (configurable)
+
+#### Admin Emails (always in Greek)
+- **New Booking Alert**: Immediate notification with customer language noted
+- **Low Inventory Alert**: When availability drops below threshold
+
+### Testing Email System
+
+```bash
+# Test email sending
+node -e "
+const { sendTestEmail } = require('./src/services/emailService');
+sendTestEmail('bookingConfirmation', 'en').then(console.log);
+"
+
+# Test specific templates
+node -e "
+const { sendTestEmail } = require('./src/services/emailService');
+sendTestEmail('arrivalReminder', 'de').then(console.log);
+sendTestEmail('newBookingAlert', 'el').then(console.log);
+"
+```
+
+## 🔄 Scheduled Tasks
+
+Automated background processes:
+
+### Arrival Reminders
+- **Frequency**: Every hour
+- **Function**: Check for bookings with check-in tomorrow
+- **Action**: Send reminder emails in customer's language
+
+### Inventory Monitoring  
+- **Frequency**: Twice daily (9 AM, 6 PM)
+- **Function**: Check low room availability
+- **Action**: Alert admin when availability drops
+
+### Cleanup Tasks
+- **Frequency**: Daily at 2 AM
+- **Function**: Clean old notification flags
+- **Action**: Maintain database hygiene
+
+## 📊 API Endpoints
+
+### Authentication
+```
+POST   /api/auth/login         # Admin login
+POST   /api/auth/logout        # Logout
+GET    /api/auth/profile       # Get user profile
+GET    /api/auth/session       # Check session status
+```
+
+### Bookings
+```
+GET    /api/bookings           # List all bookings
+POST   /api/bookings           # Create new booking
+GET    /api/bookings/:id       # Get booking details
+PUT    /api/bookings/:id       # Update booking
+DELETE /api/bookings/:id       # Cancel booking
+```
+
+### Rooms/Apartments
+```
+GET    /api/rooms              # List all rooms
+POST   /api/rooms              # Create room (admin)
+GET    /api/rooms/:id          # Get room details
+PUT    /api/rooms/:id          # Update room (admin)
+DELETE /api/rooms/:id          # Delete room (admin)
+```
+
+### Payments
+```
+POST   /api/payments/create-payment-intent    # Create Stripe payment
+POST   /api/payments/confirm-payment          # Confirm payment and create booking
+```
+
+### Admin Dashboard
+```
+GET    /api/admin/dashboard    # Dashboard statistics
+GET    /api/admin/analytics    # Detailed analytics
+GET    /api/admin/revenue-reports  # Revenue reporting
+GET    /api/admin/settings     # Get system settings
+PUT    /api/admin/settings     # Update system settings
+```
+
+### Special Offers
+```
+GET    /api/offers             # List active offers
+POST   /api/offers             # Create offer (admin)
+GET    /api/offers/:id         # Get offer details
+PUT    /api/offers/:id         # Update offer (admin)
+DELETE /api/offers/:id         # Delete offer (admin)
+```
+
+### Contact
+```
+GET    /api/contact            # List contact messages (admin)
+POST   /api/contact            # Submit contact form
+```
+
+## 🗄️ Database Models
+
+### Booking Model
+```javascript
+{
+  bookingNumber: String,          // Auto-generated (AST-2024-001)
+  roomId: ObjectId,               // Reference to Room
+  userId: ObjectId,               // Optional user reference
+  guestInfo: {
+    firstName: String,
+    lastName: String,
+    email: String,
+    phone: String,
+    specialRequests: String,
+    language: String              // Customer's language (el/en/de)
+  },
+  checkIn: Date,
+  checkOut: Date,
+  adults: Number,
+  children: Number,
+  totalAmount: Number,
+  paymentMethod: String,          // CARD or CASH
+  paymentStatus: String,          // PENDING, PAID, FAILED, REFUNDED
+  bookingStatus: String,          // CONFIRMED, PENDING, CANCELLED, etc.
+  stripePaymentIntentId: String,  // Stripe reference
+  notes: String,
+  reminderSent: Boolean,          // Arrival reminder flag
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### Settings Model
+```javascript
+{
+  // Booking Rules
+  checkInTime: String,            // Default: "15:00"
+  checkOutTime: String,           // Default: "11:00"
+  minAdvanceBooking: Number,      // Days: 1-365
+  maxAdvanceBooking: Number,      // Days: 1-365
+  cancellationPolicy: Number,     // Hours before free cancellation
+  overbookingAllowed: Boolean,    // Allow overBooking
+
+  // Pricing & Payments
+  currency: String,               // EUR (fixed for Greece)
+  taxRate: Number,                // Default: 13% (Greek VAT)
+  automaticPricing: Boolean,      // Dynamic pricing toggle
+  directBookingDiscount: Number,  // Percentage discount
+
+  // Notifications
+  emailNotifications: Boolean,
+  bookingConfirmations: Boolean,
+  reminderNotifications: Boolean,
+  reminderHours: Number,          // Hours before check-in
+  lowInventoryAlerts: Boolean,
+  newBookingAlerts: Boolean,
+
+  // System Preferences
+  itemsPerPage: Number,           // Admin pagination
+  maintenanceMode: Boolean,       // Disable new bookings
+
+  // Security
+  sessionTimeout: Number,         // Minutes
+  requireTwoFA: Boolean,
+  auditLogging: Boolean,
+  maxConcurrentSessions: Number
+}
+```
+
+## 🔒 Security Features
+
+### Authentication & Authorization
+- **JWT Tokens**: Secure session management
+- **Role-based Access**: Admin/user permissions
+- **Session Management**: Configurable timeouts
+- **API Key Protection**: Optional API key middleware
+
+### Input Validation
+- **express-validator**: All input sanitization
+- **Mongoose Validation**: Database-level constraints
+- **Type Checking**: Parameter validation
+- **SQL Injection Prevention**: NoSQL injection protection
+
+### Payment Security
+- **Stripe Integration**: PCI-compliant processing
+- **Payment Intent Flow**: Secure 3D authentication
+- **Server-side Validation**: Amount verification
+- **Idempotency**: Duplicate payment prevention
+
+## 📈 Analytics & Reporting
+
+### Dashboard Metrics
+- **Live Statistics**: Real-time booking counts, revenue
+- **Occupancy Rates**: Current and historical
+- **Revenue Tracking**: Daily, weekly, monthly totals
+- **Guest Analytics**: Demographics and patterns
+
+### Revenue Reports
+- **Period Analysis**: Custom date range reporting
+- **Room Performance**: Individual room statistics
+- **Payment Analysis**: Payment method breakdown
+- **Trend Analysis**: Growth and seasonal patterns
 
 ## 🚀 Deployment
 
-### Production Environment Variables
+### Production Checklist
 
-Ensure all environment variables are set for production:
+1. **Environment Variables**
+   ```bash
+   NODE_ENV=production
+   MONGODB_URI=mongodb+srv://... (Atlas production cluster)
+   JWT_SECRET=... (strong production secret)
+   STRIPE_SECRET_KEY=sk_live_... (live keys)
+   EMAIL_USER=... (business email)
+   ```
 
-```env
-NODE_ENV=production
-MONGODB_URI=mongodb+srv://your-production-mongodb-url
-JWT_SECRET=your-very-secure-production-jwt-secret
-STRIPE_SECRET_KEY=sk_live_your-production-stripe-key
-FRONTEND_URL=https://your-domain.com
+2. **Database Setup**
+   - MongoDB Atlas production cluster
+   - Database user with appropriate permissions
+   - Network access configuration
+   - Backup strategy
+
+3. **Email Configuration**
+   - Business Gmail account
+   - App password generated
+   - Email templates tested
+
+4. **Security**
+   - CORS configuration for production domains
+   - Rate limiting enabled
+   - Input validation active
+   - SSL/TLS encryption
+
+### Deployment Platforms
+
+#### Render (Recommended)
+```bash
+# Build command
+npm install
+
+# Start command  
+npm start
+
+# Environment variables set in dashboard
 ```
 
-### Render.com Deployment
+#### Railway
+```bash
+# Automatic deployment from GitHub
+# Environment variables in project settings
+```
 
-This project is configured for deployment on Render.com with the included `render.yaml` configuration.
+#### Heroku
+```bash
+# Procfile
+web: node src/index.js
+
+# Config vars set in dashboard
+```
 
 ## 🧪 Testing
 
-Run the test suite:
-
+### Connectivity Tests
 ```bash
-npm test
+# Test backend server
+node test-backend.js
+
+# Test MongoDB connection
+node test-mongodb.js
+
+# Test email system
+node -e "require('./src/services/emailService').sendTestEmail('bookingConfirmation', 'en')"
 ```
 
-Test MongoDB connection:
+### API Testing
+```bash
+# Install HTTPie or use curl
+http GET localhost:3001/api/rooms
+http POST localhost:3001/api/auth/login email=admin@asterias.gr password=admin123
+```
+
+### Load Testing
+```bash
+# Use artillery or similar
+npm install -g artillery
+artillery quick --count 10 --num 5 http://localhost:3001/api/rooms
+```
+
+## 📝 Scripts
 
 ```bash
+# Development
+pnpm dev              # Start with nodemon
+
+# Production
+pnpm start            # Start server
+
+# Database
+node create-admin.js  # Create admin user
+node check-bookings.js # Validate bookings
+
+# Testing
+node test-backend.js  # Test server
+node test-mongodb.js  # Test database
+```
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+#### Database Connection
+```bash
+# Check MongoDB URI format
+mongodb+srv://username:password@cluster.mongodb.net/database?retryWrites=true&w=majority
+
+# Test connection
 node test-mongodb.js
 ```
 
-Test backend endpoints:
-
+#### Email Not Sending
 ```bash
-node test-backend.js
+# Verify Gmail settings
+# Check app password (not regular password)
+# Ensure 2FA is enabled
+# Test with simple script
 ```
 
-## 🤝 Contributing
+#### Payment Issues
+```bash
+# Verify Stripe keys
+# Check webhook endpoints
+# Test with Stripe CLI
+stripe listen --forward-to localhost:3001/api/webhooks/stripe
+```
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## 📞 Support
 
-## 📝 License
+### Contact Information
+- **Email**: info@asteriashome.gr
+- **Location**: Koronisia, Arta 48100, Greece
+- **Technical Support**: GitHub Issues
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+### Documentation
+- [Stripe API Documentation](https://stripe.com/docs/api)
+- [MongoDB Documentation](https://docs.mongodb.com/)
+- [Express.js Documentation](https://expressjs.com/)
+- [Nodemailer Documentation](https://nodemailer.com/)
 
 ---
 
-*For frontend setup instructions, please refer to the main README.md file in the root directory.* 
+**Asterias Homes Backend** - Powering traditional Greek hospitality with modern technology. 
