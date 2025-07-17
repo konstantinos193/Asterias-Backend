@@ -4,6 +4,7 @@ const Stripe = require('stripe');
 const Booking = require('../models/Booking');
 const Room = require('../models/Room');
 const { authenticateToken, optionalAuth } = require('../middleware/auth');
+const { detectLanguage } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -132,11 +133,20 @@ router.post('/confirm-payment', [
       return res.status(400).json({ error: 'Room is no longer available for the selected dates' });
     }
 
+    // Detect customer's language from request
+    const customerLanguage = detectLanguage(null, req);
+    
+    // Add language to guest info
+    const guestInfoWithLanguage = {
+      ...guestInfo,
+      language: customerLanguage
+    };
+
     // Create booking
     const booking = new Booking({
       roomId,
       userId: req.user?._id, // Optional user association
-      guestInfo,
+      guestInfo: guestInfoWithLanguage,
       checkIn: new Date(checkIn),
       checkOut: new Date(checkOut),
       adults: parseInt(adults),

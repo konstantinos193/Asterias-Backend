@@ -36,8 +36,16 @@ async function checkArrivalReminders() {
         const room = await Room.findById(booking.roomId);
         if (!room) continue;
 
-        // Send reminder
-        const result = await sendArrivalReminder(booking, room);
+        // Send reminder with customer's language
+        const result = await sendArrivalReminder({
+          bookingId: booking.bookingNumber,
+          guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
+          guestEmail: booking.guestInfo.email,
+          roomName: room.name,
+          checkIn: booking.checkIn,
+          checkInTime: '15:00', // Get from settings later
+          language: booking.guestInfo.language
+        }, { language: booking.guestInfo.language });
         
         if (result && result.success) {
           // Mark reminder as sent

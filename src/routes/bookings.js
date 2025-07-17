@@ -5,7 +5,7 @@ const Room = require('../models/Room');
 const { authenticateToken, requireAdmin, optionalAuth } = require('../middleware/auth');
 const bookingcomService = require('../services/bookingcom.service');
 const requireApiKey = require('../middleware/apiKey');
-const { sendBookingConfirmation, sendNewBookingAlert } = require('../services/emailService');
+const { sendBookingConfirmation, sendNewBookingAlert, detectLanguage } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -61,11 +61,20 @@ router.post('/', [
       });
     }
 
+    // Detect customer's language from request
+    const customerLanguage = detectLanguage(null, req);
+    
+    // Add language to guest info
+    const guestInfoWithLanguage = {
+      ...guestInfo,
+      language: customerLanguage
+    };
+
     // Create booking
     const booking = new Booking({
       roomId,
       userId: req.user?._id, // Optional user association
-      guestInfo,
+      guestInfo: guestInfoWithLanguage,
       checkIn,
       checkOut,
       adults,
@@ -101,8 +110,21 @@ router.post('/', [
       try {
         console.log(`📧 Sending notifications for booking ${booking._id}...`);
         
-        // Send confirmation email to customer
-        const confirmationResult = await sendBookingConfirmation(booking, room);
+        // Send confirmation email to customer  
+        const confirmationResult = await sendBookingConfirmation({
+          bookingId: booking.bookingNumber,
+          guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
+          guestEmail: booking.guestInfo.email,
+          guestPhone: booking.guestInfo.phone,
+          roomName: room.name,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          checkInTime: '15:00', // Get from settings later
+          checkOutTime: '11:00', // Get from settings later
+          guests: booking.adults + booking.children,
+          totalPrice: booking.totalAmount,
+          language: booking.guestInfo.language
+        }, { language: booking.guestInfo.language });
         if (confirmationResult && confirmationResult.success) {
           console.log(`✅ Booking confirmation sent to ${booking.guestInfo.email}`);
         } else {
@@ -110,7 +132,20 @@ router.post('/', [
         }
 
         // Send new booking alert to admin
-        const alertResult = await sendNewBookingAlert(booking, room);
+        const alertResult = await sendNewBookingAlert({
+          bookingId: booking.bookingNumber,
+          guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
+          guestEmail: booking.guestInfo.email,
+          guestPhone: booking.guestInfo.phone,
+          roomName: room.name,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          guests: booking.adults + booking.children,
+          totalPrice: booking.totalAmount,
+          status: booking.bookingStatus,
+          createdAt: booking.createdAt,
+          language: booking.guestInfo.language  // Include customer's language for admin reference
+        });
         if (alertResult && alertResult.success) {
           console.log(`✅ New booking alert sent to admin`);
         } else {
