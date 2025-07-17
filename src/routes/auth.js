@@ -218,4 +218,41 @@ router.post('/logout', authenticateToken, (req, res) => {
   res.json({ message: 'Logged out successfully' });
 });
 
+// Create initial admin (one-time use)
+router.post('/create-admin', async (req, res) => {
+  try {
+    // Check if admin already exists
+    const existingAdmin = await User.findOne({ role: 'ADMIN' });
+    if (existingAdmin) {
+      return res.status(400).json({ error: 'Admin user already exists' });
+    }
+
+    const { name, email, password } = req.body;
+
+    // Validate required fields
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and password are required' });
+    }
+
+    // Create admin user
+    const adminData = {
+      name,
+      email,
+      password,
+      role: 'ADMIN',
+      isActive: true
+    };
+
+    const admin = await User.createAdmin(adminData);
+
+    res.status(201).json({
+      message: 'Admin user created successfully',
+      user: admin.getPublicProfile()
+    });
+  } catch (error) {
+    console.error('Admin creation error:', error);
+    res.status(500).json({ error: 'Failed to create admin user' });
+  }
+});
+
 module.exports = router; 
