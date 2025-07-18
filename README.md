@@ -74,19 +74,19 @@ backend/
 ### Installation
 
 1. **Install dependencies**
-   ```bash
-   cd backend
+```bash
+cd backend
    pnpm install
-   ```
+```
 
 2. **Environment setup**
-   ```bash
+```bash
    cp env.example .env
    # Edit .env with your configuration
-   ```
+```
 
 3. **Create admin user**
-   ```bash
+```bash
    node create-admin.js
    ```
 
@@ -409,7 +409,7 @@ Will automatically receive:
 
 1. **Environment Variables**
    ```bash
-   NODE_ENV=production
+NODE_ENV=production
    MONGODB_URI=mongodb+srv://... (Atlas production cluster)
    JWT_SECRET=... (strong production secret)
    STRIPE_SECRET_KEY=sk_live_... (live keys)

@@ -123,11 +123,14 @@ router.get('/:id/availability', [
 // Create new room (admin only)
 router.post('/', authenticateToken, requireAdmin, [
   body('name').trim().notEmpty().withMessage('Room name is required'),
+  body('nameKey').trim().notEmpty().withMessage('Room name key is required'),
   body('description').trim().notEmpty().withMessage('Description is required'),
+  body('descriptionKey').trim().notEmpty().withMessage('Description key is required'),
   body('price').isFloat({ min: 0 }).withMessage('Valid price is required'),
   body('capacity').isInt({ min: 1 }).withMessage('Valid capacity is required'),
   body('bedType').trim().notEmpty().withMessage('Bed type is required'),
   body('features').optional().isArray(),
+  body('featureKeys').optional().isArray(),
   body('amenities').optional().isObject()
 ], async (req, res) => {
   try {
