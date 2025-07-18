@@ -698,7 +698,23 @@ router.post('/rooms', authenticateToken, requireAdmin, [
     }
 
     const Room = require('../models/Room');
-    const roomData = req.body;
+    let roomData = { ...req.body };
+
+    // Generate translation keys if not provided (for backward compatibility)
+    if (!roomData.nameKey) {
+      const normalizedName = roomData.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+      roomData.nameKey = `rooms.${normalizedName}.name`;
+    }
+    
+    if (!roomData.descriptionKey) {
+      const normalizedName = roomData.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+      roomData.descriptionKey = `rooms.${normalizedName}.description`;
+    }
+
+    // Generate feature keys if features exist but featureKeys don't
+    if (roomData.features && roomData.features.length > 0 && !roomData.featureKeys) {
+      roomData.featureKeys = roomData.features.map(feature => `rooms.feature.${feature}`);
+    }
 
     const room = new Room(roomData);
     await room.save();
