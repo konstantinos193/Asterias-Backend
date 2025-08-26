@@ -146,7 +146,10 @@ router.post('/confirm-payment', [
     const booking = new Booking({
       roomId,
       userId: req.user?._id, // Optional user association
-      guestInfo: guestInfoWithLanguage,
+      guestInfo: {
+        ...guestInfoWithLanguage,
+        specialRequests: specialRequests || ''
+      },
       checkIn: new Date(checkIn),
       checkOut: new Date(checkOut),
       adults: parseInt(adults),
@@ -155,8 +158,7 @@ router.post('/confirm-payment', [
       paymentMethod: 'CARD',
       paymentStatus: 'PAID',
       bookingStatus: 'CONFIRMED',
-      stripePaymentIntentId: paymentIntentId,
-      specialRequests
+      stripePaymentIntentId: paymentIntentId
     });
 
     await booking.save();
