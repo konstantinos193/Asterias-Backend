@@ -18,6 +18,7 @@ const adminRoutes = require('./routes/admin');
 const paymentRoutes = require('./routes/payments');
 const bookingcomWebhookRoutes = require('./routes/bookingcom.webhook');
 const imagesRoutes = require('./routes/images');
+const availabilityRoutes = require('./routes/availability');
 
 // Settings middleware
 const { checkMaintenanceMode, attachSettings } = require('./middleware/settings');
@@ -65,7 +66,8 @@ app.get('/', (req, res) => {
       offers: '/api/offers',
       contact: '/api/contact',
       admin: '/api/admin',
-      payments: '/api/payments'
+      payments: '/api/payments',
+      availability: '/api/availability'
     }
   });
 });
@@ -84,6 +86,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/bookingcom-webhooks', bookingcomWebhookRoutes);
 app.use('/api/images', imagesRoutes);
+app.use('/api/availability', availabilityRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
