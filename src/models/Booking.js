@@ -117,22 +117,31 @@ bookingSchema.index({ bookingStatus: 1 });
 
 // Generate booking number
 bookingSchema.pre('save', async function(next) {
+  console.log('Pre-save middleware triggered, isNew:', this.isNew, 'bookingNumber:', this.bookingNumber);
+  
   if (this.isNew && !this.bookingNumber) {
     try {
       const year = new Date().getFullYear();
+      console.log('Generating booking number for year:', year);
+      
       const count = await this.constructor.countDocuments({
         createdAt: {
           $gte: new Date(year, 0, 1),
           $lt: new Date(year + 1, 0, 1)
         }
       });
+      
+      console.log('Count of existing bookings this year:', count);
       this.bookingNumber = `AST-${year}-${String(count + 1).padStart(3, '0')}`;
       console.log(`Generated booking number: ${this.bookingNumber}`);
     } catch (error) {
       console.error('Error generating booking number:', error);
       // Fallback: use timestamp-based number
       this.bookingNumber = `AST-${Date.now()}`;
+      console.log('Using fallback booking number:', this.bookingNumber);
     }
+  } else {
+    console.log('Skipping booking number generation - isNew:', this.isNew, 'has bookingNumber:', !!this.bookingNumber);
   }
   next();
 });

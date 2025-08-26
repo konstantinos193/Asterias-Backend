@@ -143,6 +143,19 @@ router.post('/confirm-payment', [
     };
 
     // Create booking
+    console.log('Creating booking with data:', {
+      roomId,
+      checkIn: new Date(checkIn),
+      checkOut: new Date(checkOut),
+      adults: parseInt(adults),
+      children: parseInt(children),
+      totalAmount: paymentIntent.amount / 100,
+      paymentMethod: 'CARD',
+      paymentStatus: 'PAID',
+      bookingStatus: 'CONFIRMED',
+      stripePaymentIntentId: paymentIntentId
+    });
+
     const booking = new Booking({
       roomId,
       userId: req.user?._id, // Optional user association
@@ -161,7 +174,11 @@ router.post('/confirm-payment', [
       stripePaymentIntentId: paymentIntentId
     });
 
+    console.log('Booking object created, about to save...');
+    console.log('Booking object:', booking);
+    
     await booking.save();
+    console.log('Booking saved successfully, bookingNumber:', booking.bookingNumber);
     await booking.populate('room');
 
     res.status(201).json({
@@ -171,6 +188,96 @@ router.post('/confirm-payment', [
   } catch (error) {
     console.error('Confirm payment error:', error);
     res.status(500).json({ error: 'Failed to confirm payment' });
+  }
+});
+
+// Create cash booking (no payment intent)
+router.post('/create-cash-booking', [
+  body('roomId').notEmpty().withMessage('Room ID is required'),
+  body('checkIn').notEmpty().withMessage('Check-in date is required'),
+  body('checkOut').notEmpty().withMessage('Check-out date is required'),
+  body('adults').isInt({ min: 1 }).withMessage('At least one adult is required'),
+  body('children').optional().isInt({ min: 0 }).withMessage('Children must be a positive number'),
+  body('totalAmount').isFloat({ min: 0 }).withMessage('Total amount is required'),
+  body('guestInfo').isObject().withMessage('Guest information is required'),
+  body('guestInfo.firstName').trim().notEmpty().withMessage('First name is required'),
+  body('guestInfo.lastName').trim().notEmpty().withMessage('Last name is required'),
+  body('guestInfo.email').isEmail().withMessage('Valid email is required'),
+  body('guestInfo.phone').trim().notEmpty().withMessage('Phone is required'),
+  body('specialRequests').optional().trim()
+], optionalAuth, async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { roomId, checkIn, checkOut, adults, children, totalAmount, guestInfo, specialRequests } = req.body;
+
+    // Check if room still exists and is available
+    const room = await Room.findById(roomId);
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    const isAvailable = await Booking.isApartmentAvailable(roomId, checkIn, checkOut);
+    if (!isAvailable) {
+      return res.status(400).json({ error: 'Room is no longer available for the selected dates' });
+    }
+
+    // Detect customer's language from request
+    const customerLanguage = detectLanguage(null, req);
+    
+    // Add language to guest info
+    const guestInfoWithLanguage = {
+      ...guestInfo,
+      language: customerLanguage
+    };
+
+    // Create booking
+    console.log('Creating cash booking with data:', {
+      roomId,
+      checkIn: new Date(checkIn),
+      checkOut: new Date(checkOut),
+      adults: parseInt(adults),
+      children: parseInt(children),
+      totalAmount: parseFloat(totalAmount),
+      paymentMethod: 'CASH',
+      paymentStatus: 'PENDING',
+      bookingStatus: 'CONFIRMED'
+    });
+
+    const booking = new Booking({
+      roomId,
+      userId: req.user?._id, // Optional user association
+      guestInfo: {
+        ...guestInfoWithLanguage,
+        specialRequests: specialRequests || ''
+      },
+      checkIn: new Date(checkIn),
+      checkOut: new Date(checkOut),
+      adults: parseInt(adults),
+      children: parseInt(children),
+      totalAmount: parseFloat(totalAmount),
+      paymentMethod: 'CASH',
+      paymentStatus: 'PENDING',
+      bookingStatus: 'CONFIRMED'
+    });
+
+    console.log('Cash booking object created, about to save...');
+    console.log('Cash booking object:', booking);
+    
+    await booking.save();
+    console.log('Cash booking saved successfully, bookingNumber:', booking.bookingNumber);
+    await booking.populate('room');
+
+    res.status(201).json({
+      message: 'Cash booking created successfully',
+      booking
+    });
+  } catch (error) {
+    console.error('Create cash booking error:', error);
+    res.status(500).json({ error: 'Failed to create cash booking' });
   }
 });
 
