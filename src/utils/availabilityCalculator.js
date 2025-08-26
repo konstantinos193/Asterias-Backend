@@ -146,6 +146,81 @@ async function calculateMonthlyAvailability(roomId, monthDate) {
 }
 
 /**
+ * Calculate aggregated availability for all rooms over a month period (for calendar display)
+ * @param {Date} monthDate - Any date in the month
+ * @returns {Object} Monthly availability data aggregated across all rooms
+ */
+async function calculateMonthlyAggregatedAvailability(monthDate) {
+  try {
+    const startOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+    const endOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
+    
+    // Get all rooms to know total count
+    const allRooms = await Room.find({});
+    const totalRooms = allRooms.length;
+    
+    const availability = {};
+    
+    for (let date = new Date(startOfMonth); date <= endOfMonth; date.setDate(date.getDate() + 1)) {
+      const currentDate = new Date(date);
+      const nextDate = new Date(currentDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+      
+      // Calculate availability for this specific date across ALL rooms
+      let availableRooms = 0;
+      let bookedRooms = 0;
+      
+      for (const room of allRooms) {
+        try {
+          const roomAvailability = await calculateRoomAvailability(room._id, currentDate, nextDate);
+          if (roomAvailability.isAvailable) {
+            availableRooms += roomAvailability.availableNights;
+          } else {
+            bookedRooms += roomAvailability.bookedNights;
+          }
+        } catch (error) {
+          console.error(`Error calculating availability for room ${room._id}:`, error);
+          // If we can't calculate for a room, assume it's available
+          availableRooms += 1;
+        }
+      }
+      
+      // Determine status based on available vs total rooms
+      let status, color, textColor;
+      const availabilityPercentage = (availableRooms / totalRooms) * 100;
+      
+      if (availabilityPercentage === 0) {
+        status = 'booked';
+        color = 'red';
+        textColor = 'white';
+      } else if (availabilityPercentage <= 30) {
+        status = 'limited';
+        color = 'yellow';
+        textColor = 'black';
+      } else {
+        status = 'available';
+        color = 'green';
+        textColor = 'white';
+      }
+      
+      availability[currentDate.toISOString().split('T')[0]] = {
+        status,
+        color,
+        textColor,
+        availableRooms,
+        totalRooms,
+        isAvailable: availableRooms > 0
+      };
+    }
+    
+    return availability;
+  } catch (error) {
+    console.error('Error calculating monthly aggregated availability:', error);
+    throw error;
+  }
+}
+
+/**
  * Get availability status for calendar display
  * @param {number} availableRooms - Number of available rooms
  * @param {number} totalRooms - Total number of rooms
@@ -192,5 +267,6 @@ module.exports = {
   calculateRoomAvailability,
   calculateDateAvailability,
   calculateMonthlyAvailability,
+  calculateMonthlyAggregatedAvailability,
   getAvailabilityStatus
 };

@@ -4,6 +4,7 @@ const {
   calculateRoomAvailability, 
   calculateDateAvailability, 
   calculateMonthlyAvailability,
+  calculateMonthlyAggregatedAvailability,
   getAvailabilityStatus 
 } = require('../utils/availabilityCalculator');
 
@@ -74,12 +75,11 @@ router.get('/monthly/:roomId', async (req, res) => {
 });
 
 /**
- * GET /api/availability/calendar/:roomId
- * Get calendar availability data for frontend calendar component
+ * GET /api/availability/calendar
+ * Get calendar availability data for frontend calendar component (aggregated across all rooms)
  */
-router.get('/calendar/:roomId', async (req, res) => {
+router.get('/calendar', async (req, res) => {
   try {
-    const { roomId } = req.params;
     const { month, year } = req.query;
     
     let monthDate;
@@ -89,7 +89,7 @@ router.get('/calendar/:roomId', async (req, res) => {
       monthDate = new Date();
     }
 
-    const monthlyAvailability = await calculateMonthlyAvailability(roomId, monthDate);
+    const monthlyAvailability = await calculateMonthlyAggregatedAvailability(monthDate);
     
     // Transform data for frontend calendar
     const calendarData = {};
@@ -99,14 +99,13 @@ router.get('/calendar/:roomId', async (req, res) => {
         status: dayData.status,
         color: dayData.color,
         textColor: dayData.textColor,
-        availableRooms: dayData.availableNights,
+        availableRooms: dayData.availableRooms,
         totalRooms: dayData.totalRooms,
         isAvailable: dayData.isAvailable
       };
     });
 
     res.json({
-      roomId,
       month: monthDate.getMonth() + 1,
       year: monthDate.getFullYear(),
       availability: calendarData
