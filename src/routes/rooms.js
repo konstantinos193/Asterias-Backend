@@ -100,7 +100,7 @@ router.get('/:id/availability', [
     }
 
     // Check availability
-    const isAvailable = await Booking.checkAvailability(roomId, checkIn, checkOut);
+    const isAvailable = await Booking.isApartmentAvailable(roomId, checkIn, checkOut);
 
     res.json({
       roomId,

@@ -44,7 +44,7 @@ router.post('/create-payment-intent', [
     }
 
     // Check availability
-    const isAvailable = await Booking.checkAvailability(roomId, checkIn, checkOut);
+    const isAvailable = await Booking.isApartmentAvailable(roomId, checkIn, checkOut);
     if (!isAvailable) {
       return res.status(400).json({ error: 'Room is not available for the selected dates' });
     }
@@ -128,7 +128,7 @@ router.post('/confirm-payment', [
       return res.status(404).json({ error: 'Room not found' });
     }
 
-    const isAvailable = await Booking.checkAvailability(roomId, checkIn, checkOut);
+    const isAvailable = await Booking.isApartmentAvailable(roomId, checkIn, checkOut);
     if (!isAvailable) {
       return res.status(400).json({ error: 'Room is no longer available for the selected dates' });
     }
