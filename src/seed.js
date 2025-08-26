@@ -90,7 +90,8 @@ async function seedDatabase() {
       const roomData = {
         ...standardApartmentData,
         name: `Standard Apartment ${i}`,
-        nameKey: 'rooms.standard.name'
+        nameKey: 'rooms.standard.name',
+        bookingcom_room_id: `asterias-standard-${i}` // Give each room unique ID
       };
       await Room.create(roomData);
       console.log(`Created Standard Apartment ${i}`);
