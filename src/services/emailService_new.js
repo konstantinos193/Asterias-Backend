@@ -10,7 +10,7 @@ function initializeEmailTransporter() {
   try {
     // Priority 1: Use existing SMTP configuration from .env
     if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-      transporter = nodemailer.createTransporter({
+      transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: process.env.SMTP_PORT || 587,
         secure: false, // true for 465, false for other ports
@@ -26,7 +26,7 @@ function initializeEmailTransporter() {
     }
     // Priority 2: Use Gmail service configuration
     else if (process.env.EMAIL_USER && (process.env.EMAIL_APP_PASSWORD || process.env.EMAIL_PASSWORD)) {
-      transporter = nodemailer.createTransporter({
+      transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: {
           user: process.env.EMAIL_USER,
@@ -37,7 +37,7 @@ function initializeEmailTransporter() {
     }
     // Priority 3: Use EMAIL_USER and EMAIL_PASSWORD as fallback
     else if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
-      transporter = nodemailer.createTransporter({
+      transporter = nodemailer.createTransport({
         host: 'smtp.gmail.com',
         port: 587,
         secure: false,
