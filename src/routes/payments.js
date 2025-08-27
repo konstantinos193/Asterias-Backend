@@ -142,6 +142,24 @@ router.post('/confirm-payment', [
       language: customerLanguage
     };
 
+    // Generate booking number manually
+    const year = new Date().getFullYear();
+    const lastBooking = await Booking.findOne(
+      { 
+        bookingNumber: { $regex: `^AST-${year}-` }
+      },
+      { bookingNumber: 1 }
+    ).sort({ bookingNumber: -1 });
+    
+    let nextNumber = 1;
+    if (lastBooking && lastBooking.bookingNumber) {
+      const lastNumber = parseInt(lastBooking.bookingNumber.split('-')[2]);
+      nextNumber = lastNumber + 1;
+    }
+    
+    const bookingNumber = `AST-${year}-${String(nextNumber).padStart(3, '0')}`;
+    console.log('Generated booking number:', bookingNumber);
+
     // Create booking
     console.log('Creating booking with data:', {
       roomId,
@@ -153,7 +171,8 @@ router.post('/confirm-payment', [
       paymentMethod: 'CARD',
       paymentStatus: 'PAID',
       bookingStatus: 'CONFIRMED',
-      stripePaymentIntentId: paymentIntentId
+      stripePaymentIntentId: paymentIntentId,
+      bookingNumber: bookingNumber
     });
 
     const booking = new Booking({
@@ -171,7 +190,8 @@ router.post('/confirm-payment', [
       paymentMethod: 'CARD',
       paymentStatus: 'PAID',
       bookingStatus: 'CONFIRMED',
-      stripePaymentIntentId: paymentIntentId
+      stripePaymentIntentId: paymentIntentId,
+      bookingNumber: bookingNumber
     });
 
     console.log('Booking object created, about to save...');
@@ -234,6 +254,24 @@ router.post('/create-cash-booking', [
       language: customerLanguage
     };
 
+    // Generate booking number manually for cash booking
+    const year = new Date().getFullYear();
+    const lastBooking = await Booking.findOne(
+      { 
+        bookingNumber: { $regex: `^AST-${year}-` }
+      },
+      { bookingNumber: 1 }
+    ).sort({ bookingNumber: -1 });
+    
+    let nextNumber = 1;
+    if (lastBooking && lastBooking.bookingNumber) {
+      const lastNumber = parseInt(lastBooking.bookingNumber.split('-')[2]);
+      nextNumber = lastNumber + 1;
+    }
+    
+    const bookingNumber = `AST-${year}-${String(nextNumber).padStart(3, '0')}`;
+    console.log('Generated cash booking number:', bookingNumber);
+
     // Create booking
     console.log('Creating cash booking with data:', {
       roomId,
@@ -244,7 +282,8 @@ router.post('/create-cash-booking', [
       totalAmount: parseFloat(totalAmount),
       paymentMethod: 'CASH',
       paymentStatus: 'PENDING',
-      bookingStatus: 'CONFIRMED'
+      bookingStatus: 'CONFIRMED',
+      bookingNumber: bookingNumber
     });
 
     const booking = new Booking({
@@ -261,7 +300,8 @@ router.post('/create-cash-booking', [
       totalAmount: parseFloat(totalAmount),
       paymentMethod: 'CASH',
       paymentStatus: 'PENDING',
-      bookingStatus: 'CONFIRMED'
+      bookingStatus: 'CONFIRMED',
+      bookingNumber: bookingNumber
     });
 
     console.log('Cash booking object created, about to save...');

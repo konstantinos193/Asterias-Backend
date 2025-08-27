@@ -115,42 +115,8 @@ bookingSchema.index({ userId: 1 });
 bookingSchema.index({ paymentStatus: 1 });
 bookingSchema.index({ bookingStatus: 1 });
 
-// Generate booking number
-bookingSchema.pre('save', async function(next) {
-  console.log('Pre-save middleware triggered, isNew:', this.isNew, 'bookingNumber:', this.bookingNumber);
-  
-  if (this.isNew && !this.bookingNumber) {
-    try {
-      const year = new Date().getFullYear();
-      console.log('Generating booking number for year:', year);
-      
-      // Get the highest booking number for this year and increment it
-      const lastBooking = await this.constructor.findOne(
-        { 
-          bookingNumber: { $regex: `^AST-${year}-` }
-        },
-        { bookingNumber: 1 }
-      ).sort({ bookingNumber: -1 });
-      
-      let nextNumber = 1;
-      if (lastBooking && lastBooking.bookingNumber) {
-        const lastNumber = parseInt(lastBooking.bookingNumber.split('-')[2]);
-        nextNumber = lastNumber + 1;
-      }
-      
-      this.bookingNumber = `AST-${year}-${String(nextNumber).padStart(3, '0')}`;
-      console.log(`Generated booking number: ${this.bookingNumber}`);
-    } catch (error) {
-      console.error('Error generating booking number:', error);
-      // Fallback: use timestamp-based number
-      this.bookingNumber = `AST-${Date.now()}`;
-      console.log('Using fallback booking number:', this.bookingNumber);
-    }
-  } else {
-    console.log('Skipping booking number generation - isNew:', this.isNew, 'has bookingNumber:', !!this.bookingNumber);
-  }
-  next();
-});
+// Note: Booking number generation is now handled manually in the payment routes
+// to ensure it's set before validation occurs
 
 // Virtual for total guests
 bookingSchema.virtual('totalGuests').get(function() {
