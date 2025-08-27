@@ -1453,4 +1453,178 @@ router.patch('/settings/:key', authenticateToken, requireAdmin, async (req, res)
   }
 });
 
+// Get guest data by email from bookings
+router.get('/guests/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+    
+    // Find all bookings for this guest email
+    const bookings = await Booking.find({ 'guestInfo.email': { $regex: email, $options: 'i' } })
+      .populate('roomId', 'name type number price capacity')
+      .sort({ createdAt: -1 });
+
+    if (bookings.length === 0) {
+      return res.status(404).json({ error: 'Guest not found' });
+    }
+
+    // Extract guest information from the first booking
+    const firstBooking = bookings[0];
+    const guestInfo = firstBooking.guestInfo;
+
+    // Calculate guest statistics
+    const totalVisits = bookings.length;
+    const totalSpent = bookings.reduce((total, booking) => total + booking.totalAmount, 0);
+    const lastVisit = bookings.length > 0 ? bookings[0].checkOut : null;
+
+    // Create guest profile
+    const guest = {
+      _id: email, // Use email as ID for consistency
+      email: guestInfo.email,
+      firstName: guestInfo.firstName,
+      lastName: guestInfo.lastName,
+      phone: guestInfo.phone,
+      country: guestInfo.country || '',
+      address: guestInfo.address || '',
+      postalCode: guestInfo.postalCode || '',
+      status: 'active', // Default status
+      notes: '', // Will be populated from user profile if exists
+      totalVisits,
+      lastVisit,
+      totalSpent,
+      createdAt: firstBooking.createdAt,
+      updatedAt: new Date()
+    };
+
+    // Try to find if this guest has a user account
+    try {
+      const User = require('../models/User');
+      const user = await User.findOne({ email: { $regex: email, $options: 'i' } });
+      if (user) {
+        // Merge user data with guest data
+        guest.status = user.isActive ? 'active' : 'inactive';
+        guest.notes = user.notes || '';
+        guest.createdAt = user.createdAt;
+        guest.updatedAt = user.updatedAt;
+      }
+    } catch (userError) {
+      // If user lookup fails, continue with guest data only
+      console.log('User lookup failed for guest:', email);
+    }
+
+    res.json({
+      guest,
+      bookings
+    });
+  } catch (error) {
+    console.error('Get guest error:', error);
+    res.status(500).json({ error: 'Failed to get guest data' });
+  }
+});
+
+// Update guest data
+router.put('/guests/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+    const updates = req.body;
+
+    // Try to update user account if it exists
+    try {
+      const User = require('../models/User');
+      const user = await User.findOne({ email: { $regex: email, $options: 'i' } });
+      
+      if (user) {
+        // Update user fields
+        const userUpdates = {};
+        if (updates.firstName) userUpdates.name = updates.firstName;
+        if (updates.phone) userUpdates.phone = updates.phone;
+        if (updates.notes !== undefined) userUpdates.notes = updates.notes;
+        if (updates.status !== undefined) userUpdates.isActive = updates.status === 'active';
+
+        if (Object.keys(userUpdates).length > 0) {
+          await User.findByIdAndUpdate(user._id, userUpdates, { new: true });
+        }
+      } else {
+        // Create new user account for this guest
+        const newUser = new User({
+          name: updates.firstName || '',
+          email: email,
+          phone: updates.phone || '',
+          notes: updates.notes || '',
+          isActive: updates.status === 'active',
+          role: 'USER'
+        });
+        await newUser.save();
+      }
+    } catch (userError) {
+      console.log('User update failed for guest:', email, userError);
+    }
+
+    // Update all bookings for this guest with new information
+    const Booking = require('../models/Booking');
+    const updateFields = {};
+    if (updates.firstName) updateFields['guestInfo.firstName'] = updates.firstName;
+    if (updates.lastName) updateFields['guestInfo.lastName'] = updates.lastName;
+    if (updates.phone) updateFields['guestInfo.phone'] = updates.phone;
+    if (updates.country) updateFields['guestInfo.country'] = updates.country;
+    if (updates.address) updateFields['guestInfo.address'] = updates.address;
+    if (updates.postalCode) updateFields['guestInfo.postalCode'] = updates.postalCode;
+
+    if (Object.keys(updateFields).length > 0) {
+      await Booking.updateMany(
+        { 'guestInfo.email': { $regex: email, $options: 'i' } },
+        { $set: updateFields }
+      );
+    }
+
+    res.json({
+      message: 'Guest updated successfully',
+      email
+    });
+  } catch (error) {
+    console.error('Update guest error:', error);
+    res.status(500).json({ error: 'Failed to update guest' });
+  }
+});
+
+// Delete guest data
+router.delete('/guests/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+
+    // Try to delete user account if it exists
+    try {
+      const User = require('../models/User');
+      const user = await User.findOne({ email: { $regex: email, $options: 'i' } });
+      
+      if (user) {
+        // Check if user has any active bookings
+        const Booking = require('../models/Booking');
+        const hasActiveBookings = await Booking.exists({
+          'guestInfo.email': { $regex: email, $options: 'i' },
+          bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
+          checkOut: { $gte: new Date() }
+        });
+
+        if (hasActiveBookings) {
+          return res.status(400).json({ 
+            error: 'Cannot delete guest with active bookings' 
+          });
+        }
+
+        await User.findByIdAndDelete(user._id);
+      }
+    } catch (userError) {
+      console.log('User deletion failed for guest:', email, userError);
+    }
+
+    res.json({
+      message: 'Guest deleted successfully',
+      email
+    });
+  } catch (error) {
+    console.error('Delete guest error:', error);
+    res.status(500).json({ error: 'Failed to delete guest' });
+  }
+});
+
 module.exports = router; 
