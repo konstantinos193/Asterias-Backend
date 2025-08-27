@@ -4,7 +4,7 @@ const Stripe = require('stripe');
 const Booking = require('../models/Booking');
 const Room = require('../models/Room');
 const { authenticateToken, optionalAuth } = require('../middleware/auth');
-const { detectLanguage } = require('../services/emailService_new');
+const { detectLanguage, sendBookingConfirmationEmail } = require('../services/emailService_new');
 
 const router = express.Router();
 
@@ -199,8 +199,15 @@ router.post('/confirm-payment', [
     
     await booking.save();
     console.log('Booking saved successfully, bookingNumber:', booking.bookingNumber);
-    // Note: Removed populate('room') to avoid StrictPopulateError
-    // The booking object already contains all necessary information
+    
+    // Send confirmation email to customer
+    try {
+      await sendBookingConfirmationEmail(booking, req);
+      console.log('Confirmation email sent successfully to:', booking.guestInfo.email);
+    } catch (emailError) {
+      console.error('Failed to send confirmation email:', emailError);
+      // Don't fail the booking if email fails
+    }
 
     res.status(201).json({
       message: 'Payment confirmed and booking created successfully',
@@ -310,8 +317,15 @@ router.post('/create-cash-booking', [
     
     await booking.save();
     console.log('Cash booking saved successfully, bookingNumber:', booking.bookingNumber);
-    // Note: Removed populate('room') to avoid StrictPopulateError
-    // The booking object already contains all necessary information
+    
+    // Send confirmation email to customer
+    try {
+      await sendBookingConfirmationEmail(booking, req);
+      console.log('Confirmation email sent successfully to:', booking.guestInfo.email);
+    } catch (emailError) {
+      console.error('Failed to send confirmation email:', emailError);
+      // Don't fail the booking if email fails
+    }
 
     res.status(201).json({
       message: 'Cash booking created successfully',
