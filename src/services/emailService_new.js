@@ -98,9 +98,36 @@ const emailTemplates = {
           <p><strong>${t(lang, 'bookingConfirmation', 'checkOut')}:</strong> ${data.checkOutTime}</p>
         </div>
         
+        <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
+          <h4 style="color: #28a745; margin-top: 0;">📋 Receipt</h4>
+          <div style="display: flex; justify-content: space-between; margin: 8px 0;">
+            <span>Room Price (${data.nights} nights):</span>
+            <span>€${(data.totalPrice / data.nights).toFixed(2)} × ${data.nights}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin: 8px 0;">
+            <span>Tax (13%):</span>
+            <span>Included</span>
+          </div>
+          <hr style="border: none; border-top: 1px solid #dee2e6; margin: 15px 0;">
+          <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 18px;">
+            <span>Total Amount:</span>
+            <span>€${data.totalPrice}</span>
+          </div>
+          ${data.paymentMethod === 'CARD' ? `
+          <div style="margin-top: 15px; padding: 10px; background: #e8f5e8; border-radius: 5px; font-size: 14px;">
+            <strong>Payment Status:</strong> ✅ Paid via Stripe<br>
+            <strong>Transaction ID:</strong> ${data.stripePaymentIntentId || 'N/A'}
+          </div>
+          ` : `
+          <div style="margin-top: 15px; padding: 10px; background: #fff3cd; border-radius: 5px; font-size: 14px;">
+            <strong>Payment Status:</strong> 💰 Cash on Arrival
+          </div>
+          `}
+        </div>
+        
         <p>${t(lang, 'bookingConfirmation', 'questionsText')}</p>
-        <p>📧 info@asteriashome.gr</p>
-        <p>📞 +30 26810 XXXXX</p>
+        <p>📧 asterias.apartmentskoronisia@gmail.com</p>
+        <p>📞 +30 6972705881</p>
         
         <p>${t(lang, 'bookingConfirmation', 'lookingForward')}</p>
         
@@ -125,7 +152,14 @@ const emailTemplates = {
       
       ${t(lang, 'bookingConfirmation', 'address')}: Koronisia, Arta 48100, Greece
       
-      info@asteriashome.gr | +30 26810 XXXXX
+      RECEIPT:
+      Room Price (${data.nights} nights): €${(data.totalPrice / data.nights).toFixed(2)} × ${data.nights}
+      Tax (13%): Included
+      Total Amount: €${data.totalPrice}
+      Payment Status: ${data.paymentMethod === 'CARD' ? 'Paid via Stripe' : 'Cash on Arrival'}
+      ${data.paymentMethod === 'CARD' ? `Transaction ID: ${data.stripePaymentIntentId || 'N/A'}` : ''}
+      
+      asterias.apartmentskoronisia@gmail.com | +30 6972705881
     `
   },
 
@@ -152,7 +186,7 @@ const emailTemplates = {
           <h4>${t(lang, 'arrivalReminder', 'importantInfo')}</h4>
           <p><strong>${t(lang, 'arrivalReminder', 'address')}:</strong> Koronisia, Arta 48100, Greece</p>
           <p><strong>${t(lang, 'arrivalReminder', 'keyPickup')}:</strong> ${t(lang, 'arrivalReminder', 'keyPickupText')}</p>
-          <p><strong>${t(lang, 'arrivalReminder', 'phone')}:</strong> +30 26810 XXXXX</p>
+          <p><strong>${t(lang, 'arrivalReminder', 'phone')}:</strong> +30 6972705881</p>
         </div>
         
         <p>${t(lang, 'arrivalReminder', 'goodTrip')}</p>
@@ -175,7 +209,7 @@ const emailTemplates = {
       ${t(lang, 'arrivalReminder', 'bookingCode')}: ${data.bookingId}
       
       ${t(lang, 'arrivalReminder', 'address')}: Koronisia, Arta 48100, Greece
-      ${t(lang, 'arrivalReminder', 'phone')}: +30 26810 XXXXX
+      ${t(lang, 'arrivalReminder', 'phone')}: +30 6972705881
       
       ${t(lang, 'arrivalReminder', 'keyPickupText')}
     `
@@ -354,6 +388,44 @@ async function sendBookingConfirmation(bookingData, options = {}) {
   return await sendEmail('bookingConfirmation', bookingData, options);
 }
 
+// Function to send booking confirmation email with proper data formatting
+async function sendBookingConfirmationEmail(booking, req) {
+  try {
+    // Calculate nights
+    const checkIn = new Date(booking.checkIn);
+    const checkOut = new Date(booking.checkOut);
+    const nights = Math.ceil((checkOut - checkIn) / (1000 * 60 * 60 * 24));
+    
+    // Prepare data for email template
+    const emailData = {
+      bookingId: booking.bookingNumber,
+      guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
+      guestEmail: booking.guestInfo.email,
+      guestPhone: booking.guestInfo.phone,
+      roomName: 'Standard Apartment', // You can enhance this by fetching room details
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      checkInTime: '15:00',
+      checkOutTime: '11:00',
+      guests: `${booking.adults} adults${booking.children > 0 ? `, ${booking.children} children` : ''}`,
+      totalPrice: booking.totalAmount,
+      nights: nights,
+      paymentMethod: booking.paymentMethod,
+      stripePaymentIntentId: booking.stripePaymentIntentId,
+      status: booking.bookingStatus,
+      createdAt: booking.createdAt
+    };
+    
+    // Detect language from booking or request
+    const language = booking.guestInfo.language || detectLanguage(booking, req);
+    
+    return await sendEmail('bookingConfirmation', emailData, { language });
+  } catch (error) {
+    console.error('Error preparing booking confirmation email:', error);
+    throw error;
+  }
+}
+
 async function sendArrivalReminder(bookingData, options = {}) {
   return await sendEmail('arrivalReminder', bookingData, options);
 }
@@ -392,6 +464,7 @@ module.exports = {
   initializeEmailTransporter,
   sendEmail,
   sendBookingConfirmation,
+  sendBookingConfirmationEmail,
   sendArrivalReminder,
   sendNewBookingAlert,
   sendLowInventoryAlert,
