@@ -4,7 +4,7 @@ const Stripe = require('stripe');
 const Booking = require('../models/Booking');
 const Room = require('../models/Room');
 const { authenticateToken, optionalAuth } = require('../middleware/auth');
-const { detectLanguage, sendBookingConfirmationEmail } = require('../services/emailService_new');
+const { detectLanguage, sendBookingConfirmationEmail } = require('../services/emailService');
 
 const router = express.Router();
 

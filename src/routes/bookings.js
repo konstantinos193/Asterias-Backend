@@ -5,7 +5,7 @@ const Room = require('../models/Room');
 const { authenticateToken, requireAdmin, optionalAuth } = require('../middleware/auth');
 const bookingcomService = require('../services/bookingcom.service');
 const requireApiKey = require('../middleware/apiKey');
-const { sendBookingConfirmation, sendNewBookingAlert, sendEmailToAllAdmins, detectLanguage } = require('../services/emailService_new');
+const { sendBookingConfirmation, sendNewBookingAlert, sendEmailToAllAdmins, detectLanguage } = require('../services/emailService');
 
 const router = express.Router();
 
