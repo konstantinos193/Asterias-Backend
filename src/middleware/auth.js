@@ -78,6 +78,15 @@ const requireAdmin = (req, res, next) => {
 
 // Middleware to accept either API key OR admin authentication
 const requireApiKeyOrAdmin = (req, res, next) => {
+  // Temporary debugging
+  console.log('=== API KEY DEBUG ===');
+  console.log('All headers:', Object.keys(req.headers));
+  console.log('x-api-key header:', req.headers['x-api-key']);
+  console.log('X-API-Key header:', req.headers['x-api-key']);
+  console.log('Expected API key:', process.env.API_KEY);
+  console.log('Keys match?', req.headers['x-api-key'] === process.env.API_KEY);
+  console.log('====================');
+  
   // Check if API key is provided
   const apiKey = req.headers['x-api-key'];
   if (apiKey && apiKey === process.env.API_KEY) {
