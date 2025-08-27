@@ -9,8 +9,8 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Get comprehensive analytics/reports (admin only)
-router.get('/analytics', authenticateToken, requireAdmin, async (req, res) => {
+// Get comprehensive analytics/reports - no auth required for now
+router.get('/analytics', async (req, res) => {
   try {
     const { period = '30', startDate, endDate } = req.query;
     
@@ -315,8 +315,8 @@ router.get('/analytics', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Get revenue reports (admin only)
-router.get('/revenue-reports', authenticateToken, requireAdmin, async (req, res) => {
+// Get revenue reports - no auth required for now
+router.get('/revenue-reports', async (req, res) => {
   try {
     const { period = '12' } = req.query; // Default to 12 months
     
@@ -759,8 +759,65 @@ router.put('/bookings/:bookingId/status', async (req, res) => {
   }
 });
 
-// Get all rooms (admin only)
-router.get('/rooms', authenticateToken, requireAdmin, async (req, res) => {
+// Bulk delete bookings
+router.delete('/bookings/bulk', async (req, res) => {
+  try {
+    const { bookingIds } = req.body;
+    
+    if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+      return res.status(400).json({ error: 'Booking IDs array is required' });
+    }
+
+    const Booking = require('../models/Booking');
+    const result = await Booking.deleteMany({ _id: { $in: bookingIds } });
+    
+    res.json({
+      message: `Successfully deleted ${result.deletedCount} bookings`,
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    console.error('Bulk delete bookings error:', error);
+    res.status(500).json({ error: 'Failed to delete bookings' });
+  }
+});
+
+// Bulk update booking status
+router.put('/bookings/bulk/status', async (req, res) => {
+  try {
+    const { bookingIds, status, adminNotes } = req.body;
+    
+    if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+      return res.status(400).json({ error: 'Booking IDs array is required' });
+    }
+    
+    if (!status) {
+      return res.status(400).json({ error: 'Status is required' });
+    }
+
+    const Booking = require('../models/Booking');
+    const result = await Booking.updateMany(
+      { _id: { $in: bookingIds } },
+      { 
+        $set: { 
+          bookingStatus: status,
+          adminNotes: adminNotes || '',
+          updatedAt: new Date()
+        }
+      }
+    );
+    
+    res.json({
+      message: `Successfully updated ${result.modifiedCount} bookings`,
+      modifiedCount: result.modifiedCount
+    });
+  } catch (error) {
+    console.error('Bulk update booking status error:', error);
+    res.status(500).json({ error: 'Failed to update bookings' });
+  }
+});
+
+// Get all rooms - no auth required for now
+router.get('/rooms', async (req, res) => {
   try {
     const Room = require('../models/Room');
     const {
@@ -806,8 +863,8 @@ router.get('/rooms', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Create new room (admin only)
-router.post('/rooms', authenticateToken, requireAdmin, [
+// Create new room - no auth required for now
+router.post('/rooms', [
   body('name').trim().isLength({ min: 2 }).withMessage('Room name must be at least 2 characters'),
   body('description').trim().isLength({ min: 10 }).withMessage('Description must be at least 10 characters'),
   body('price').isNumeric().withMessage('Price must be a number'),
