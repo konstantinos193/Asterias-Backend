@@ -230,6 +230,78 @@ router.patch('/:id/toggle', authenticateToken, requireAdmin, async (req, res) =>
   }
 });
 
+// Get applicable offers for dates and room
+router.post('/applicable', [
+  body('checkIn').isISO8601().withMessage('Valid check-in date is required'),
+  body('checkOut').isISO8601().withMessage('Valid check-out date is required'),
+  body('roomId').optional().isMongoId().withMessage('Valid room ID is required')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { checkIn, checkOut, roomId } = req.body;
+
+    // Get all active offers
+    const allOffers = await Offer.getActiveOffers();
+    
+    // Filter offers that are applicable for the given dates and room
+    const applicableOffers = allOffers.filter(offer => {
+      // Check if offer is valid for the dates
+      if (!offer.isValidForDates(checkIn, checkOut)) {
+        return false;
+      }
+
+      // Check if room is applicable (if roomId is provided)
+      if (roomId && offer.applicableRooms.length > 0) {
+        const isRoomApplicable = offer.applicableRooms.some(room => 
+          room.toString() === roomId
+        );
+        if (!isRoomApplicable) {
+          return false;
+        }
+      }
+
+      // Check minimum stay requirement
+      const nights = Math.ceil((new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24));
+      if (offer.minStay && nights < offer.minStay) {
+        return false;
+      }
+
+      // Check maximum stay requirement
+      if (offer.maxStay && nights > offer.maxStay) {
+        return false;
+      }
+
+      return true;
+    });
+
+    res.json({
+      message: 'Applicable offers retrieved successfully',
+      offers: applicableOffers.map(offer => ({
+        id: offer._id,
+        title: offer.title,
+        titleKey: offer.titleKey,
+        description: offer.description,
+        descriptionKey: offer.descriptionKey,
+        discount: offer.discount,
+        image: offer.image,
+        conditions: offer.conditions,
+        code: offer.code,
+        badgeKey: offer.badgeKey,
+        roomTypeKey: offer.roomTypeKey,
+        includesKeys: offer.includesKeys,
+        featured: offer.featured
+      }))
+    });
+  } catch (error) {
+    console.error('Get applicable offers error:', error);
+    res.status(500).json({ error: 'Failed to get applicable offers' });
+  }
+});
+
 // Validate offer code
 router.post('/validate-code', [
   body('code').trim().notEmpty().withMessage('Offer code is required'),

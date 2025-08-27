@@ -20,7 +20,8 @@ router.post('/create-payment-intent', [
   body('checkOut').isISO8601().withMessage('Valid check-out date is required'),
   body('adults').isInt({ min: 1 }).withMessage('At least 1 adult is required'),
   body('children').optional().isInt({ min: 0 }).withMessage('Children must be 0 or more'),
-  body('currency').optional().isIn(['eur', 'usd', 'gbp']).withMessage('Valid currency is required')
+  body('currency').optional().isIn(['eur', 'usd', 'gbp']).withMessage('Valid currency is required'),
+  body('offerId').optional().isMongoId().withMessage('Valid offer ID is required')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -34,7 +35,8 @@ router.post('/create-payment-intent', [
       checkOut,
       adults,
       children = 0,
-      currency = 'eur'
+      currency = 'eur',
+      offerId
     } = req.body;
 
     // Check if room exists
@@ -51,7 +53,39 @@ router.post('/create-payment-intent', [
 
     // Calculate total amount
     const nights = Math.ceil((new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24));
-    const basePrice = nights * room.price;
+    let basePrice = nights * room.price;
+    let discountAmount = 0;
+    let appliedOffer = null;
+
+    // Apply offer discount if offerId is provided
+    if (offerId) {
+      const Offer = require('../models/Offer');
+      const offer = await Offer.findById(offerId);
+      
+      if (offer && offer.active) {
+        // Check if offer is valid for the dates
+        if (offer.isValidForDates(checkIn, checkOut)) {
+          // Check if room is applicable
+          if (offer.applicableRooms.length === 0 || 
+              offer.applicableRooms.some(roomId => roomId.toString() === roomId)) {
+            // Check minimum stay requirement
+            if (nights >= offer.minStay) {
+              // Check maximum stay requirement
+              if (!offer.maxStay || nights <= offer.maxStay) {
+                discountAmount = basePrice * (offer.discount / 100);
+                basePrice = basePrice - discountAmount;
+                appliedOffer = {
+                  id: offer._id,
+                  title: offer.title,
+                  discount: offer.discount
+                };
+              }
+            }
+          }
+        }
+      }
+    }
+
     const taxAmount = basePrice * 0.13; // 13% tax
     const totalAmount = Math.round((basePrice + taxAmount) * 100); // Convert to cents
 
@@ -72,14 +106,22 @@ router.post('/create-payment-intent', [
         checkOut: checkOut,
         adults: adults,
         children: children,
-        nights: nights
+        nights: nights,
+        offerId: offerId || '',
+        originalPrice: (nights * room.price).toFixed(2),
+        discountAmount: discountAmount.toFixed(2),
+        finalPrice: basePrice.toFixed(2)
       }
     });
 
     res.json({
       clientSecret: paymentIntent.client_secret,
       amount: totalAmount / 100,
-      currency: currency
+      currency: currency,
+      appliedOffer: appliedOffer,
+      originalPrice: nights * room.price,
+      discountAmount: discountAmount,
+      finalPrice: basePrice
     });
   } catch (error) {
     console.error('Create payment intent error:', error);
@@ -119,7 +161,11 @@ router.post('/confirm-payment', [
       checkOut,
       adults,
       children,
-      nights
+      nights,
+      offerId,
+      originalPrice,
+      discountAmount,
+      finalPrice
     } = paymentIntent.metadata;
 
     // Check if room still exists and is available
@@ -172,7 +218,10 @@ router.post('/confirm-payment', [
       paymentStatus: 'PAID',
       bookingStatus: 'CONFIRMED',
       stripePaymentIntentId: paymentIntentId,
-      bookingNumber: bookingNumber
+      bookingNumber: bookingNumber,
+      offerId: offerId || undefined,
+      originalPrice: parseFloat(originalPrice) || undefined,
+      discountAmount: parseFloat(discountAmount) || undefined
     });
 
     const booking = new Booking({
@@ -191,7 +240,11 @@ router.post('/confirm-payment', [
       paymentStatus: 'PAID',
       bookingStatus: 'CONFIRMED',
       stripePaymentIntentId: paymentIntentId,
-      bookingNumber: bookingNumber
+      bookingNumber: bookingNumber,
+      // Store offer information
+      offerId: offerId || undefined,
+      originalPrice: parseFloat(originalPrice) || undefined,
+      discountAmount: parseFloat(discountAmount) || undefined
     });
 
     console.log('Booking object created, about to save...');
