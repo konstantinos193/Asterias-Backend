@@ -124,15 +124,21 @@ bookingSchema.pre('save', async function(next) {
       const year = new Date().getFullYear();
       console.log('Generating booking number for year:', year);
       
-      const count = await this.constructor.countDocuments({
-        createdAt: {
-          $gte: new Date(year, 0, 1),
-          $lt: new Date(year + 1, 0, 1)
-        }
-      });
+      // Get the highest booking number for this year and increment it
+      const lastBooking = await this.constructor.findOne(
+        { 
+          bookingNumber: { $regex: `^AST-${year}-` }
+        },
+        { bookingNumber: 1 }
+      ).sort({ bookingNumber: -1 });
       
-      console.log('Count of existing bookings this year:', count);
-      this.bookingNumber = `AST-${year}-${String(count + 1).padStart(3, '0')}`;
+      let nextNumber = 1;
+      if (lastBooking && lastBooking.bookingNumber) {
+        const lastNumber = parseInt(lastBooking.bookingNumber.split('-')[2]);
+        nextNumber = lastNumber + 1;
+      }
+      
+      this.bookingNumber = `AST-${year}-${String(nextNumber).padStart(3, '0')}`;
       console.log(`Generated booking number: ${this.bookingNumber}`);
     } catch (error) {
       console.error('Error generating booking number:', error);
