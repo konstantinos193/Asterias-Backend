@@ -7,27 +7,78 @@ let transporter = null;
 
 // Initialize email transporter
 function initializeEmailTransporter() {
-  // Configure for Gmail/Google Workspace (most common for small businesses)
-  transporter = nodemailer.createTransporter({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER, // your-email@gmail.com
-      pass: process.env.EMAIL_APP_PASSWORD // App-specific password
+  try {
+    // Priority 1: Use existing SMTP configuration from .env
+    if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+      transporter = nodemailer.createTransporter({
+        host: process.env.SMTP_HOST,
+        port: process.env.SMTP_PORT || 587,
+        secure: false, // true for 465, false for other ports
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS
+        },
+        tls: {
+          rejectUnauthorized: false // Allow self-signed certificates
+        }
+      });
+      console.log('✅ Email transporter initialized with SMTP configuration');
     }
-  });
-
-  // Alternative: SMTP configuration for other providers
-  /*
-  transporter = nodemailer.createTransporter({
-    host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT || 587,
-    secure: false,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS
+    // Priority 2: Use Gmail service configuration
+    else if (process.env.EMAIL_USER && (process.env.EMAIL_APP_PASSWORD || process.env.EMAIL_PASSWORD)) {
+      transporter = nodemailer.createTransporter({
+        service: 'gmail',
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_APP_PASSWORD || process.env.EMAIL_PASSWORD
+        }
+      });
+      console.log('✅ Email transporter initialized with Gmail service');
     }
-  });
-  */
+    // Priority 3: Use EMAIL_USER and EMAIL_PASSWORD as fallback
+    else if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
+      transporter = nodemailer.createTransporter({
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false,
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASSWORD
+        },
+        tls: {
+          rejectUnauthorized: false
+        }
+      });
+      console.log('✅ Email transporter initialized with Gmail SMTP fallback');
+    }
+    // Fallback: Development mode
+    else {
+      transporter = {
+        sendMail: async (mailOptions) => {
+          console.log('📧 [DEV MODE] Email would be sent:');
+          console.log('   To:', mailOptions.to);
+          console.log('   Subject:', mailOptions.subject);
+          console.log('   Content preview:', mailOptions.html ? mailOptions.html.substring(0, 100) + '...' : 'No HTML content');
+          console.log('   ---');
+          
+          return Promise.resolve({
+            messageId: 'dev-' + Date.now(),
+            response: 'Email logged (development mode)'
+          });
+        }
+      };
+      console.log('📧 Email transporter initialized in development mode (emails logged to console)');
+    }
+  } catch (error) {
+    console.error('❌ Failed to initialize email transporter:', error.message);
+    // Fallback to development mode
+    transporter = {
+      sendMail: async (mailOptions) => {
+        console.log('📧 [FALLBACK MODE] Email would be sent:', mailOptions.to);
+        return Promise.resolve({ messageId: 'fallback-' + Date.now() });
+      }
+    };
+  }
 }
 
 // Language detection helper
@@ -96,6 +147,12 @@ const emailTemplates = {
           <p><strong>${t(lang, 'bookingConfirmation', 'address')}:</strong> Koronisia, Arta 48100, Greece</p>
           <p><strong>${t(lang, 'bookingConfirmation', 'checkIn')}:</strong> ${data.checkInTime}</p>
           <p><strong>${t(lang, 'bookingConfirmation', 'checkOut')}:</strong> ${data.checkOutTime}</p>
+        </div>
+        
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <h4>${t(lang, 'bookingConfirmation', 'contactInfo')}</h4>
+          <p><strong>${t(lang, 'bookingConfirmation', 'email')}:</strong> <a href="mailto:asterias.apartmentskoronisia@gmail.com">asterias.apartmentskoronisia@gmail.com</a></p>
+          <p><strong>${t(lang, 'bookingConfirmation', 'phone')}:</strong> <a href="tel:+306972705881">+30 6972705881</a></p>
         </div>
         
         <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
@@ -186,7 +243,12 @@ const emailTemplates = {
           <h4>${t(lang, 'arrivalReminder', 'importantInfo')}</h4>
           <p><strong>${t(lang, 'arrivalReminder', 'address')}:</strong> Koronisia, Arta 48100, Greece</p>
           <p><strong>${t(lang, 'arrivalReminder', 'keyPickup')}:</strong> ${t(lang, 'arrivalReminder', 'keyPickupText')}</p>
-          <p><strong>${t(lang, 'arrivalReminder', 'phone')}:</strong> +30 6972705881</p>
+        </div>
+        
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <h4>${t(lang, 'arrivalReminder', 'contactInfo')}</h4>
+          <p><strong>${t(lang, 'arrivalReminder', 'email')}:</strong> <a href="mailto:asterias.apartmentskoronisia@gmail.com">asterias.apartmentskoronisia@gmail.com</a></p>
+          <p><strong>${t(lang, 'arrivalReminder', 'phone')}:</strong> <a href="tel:+306972705881">+30 6972705881</a></p>
         </div>
         
         <p>${t(lang, 'arrivalReminder', 'goodTrip')}</p>
@@ -209,6 +271,9 @@ const emailTemplates = {
       ${t(lang, 'arrivalReminder', 'bookingCode')}: ${data.bookingId}
       
       ${t(lang, 'arrivalReminder', 'address')}: Koronisia, Arta 48100, Greece
+      
+      ${t(lang, 'arrivalReminder', 'contactInfo')}:
+      ${t(lang, 'arrivalReminder', 'email')}: asterias.apartmentskoronisia@gmail.com
       ${t(lang, 'arrivalReminder', 'phone')}: +30 6972705881
       
       ${t(lang, 'arrivalReminder', 'keyPickupText')}
@@ -247,6 +312,12 @@ const emailTemplates = {
             ${t('el', 'newBookingAlert', 'viewBooking')}
           </a>
         </p>
+        
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <h4>Contact Information</h4>
+          <p><strong>Email:</strong> <a href="mailto:asterias.apartmentskoronisia@gmail.com">asterias.apartmentskoronisia@gmail.com</a></p>
+          <p><strong>Phone:</strong> <a href="tel:+306972705881">+30 6972705881</a></p>
+        </div>
       </div>
     `,
     text: (data, lang = 'el') => `
@@ -290,6 +361,12 @@ const emailTemplates = {
             ${t('el', 'lowInventoryAlert', 'viewBookings')}
           </a>
         </p>
+        
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <h4>Contact Information</h4>
+          <p><strong>Email:</strong> <a href="mailto:asterias.apartmentskoronisia@gmail.com">asterias.apartmentskoronisia@gmail.com</a></p>
+          <p><strong>Phone:</strong> <a href="tel:+306972705881">+30 6972705881</a></p>
+        </div>
       </div>
     `,
     text: (data, lang = 'el') => `

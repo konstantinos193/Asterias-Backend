@@ -24,7 +24,7 @@ const availabilityRoutes = require('./routes/availability');
 const { checkMaintenanceMode, attachSettings } = require('./middleware/settings');
 
 // Email and scheduled tasks
-const { initializeEmailTransporter } = require('./services/emailService');
+const { initializeEmailTransporter } = require('./services/emailService_new');
 const { startScheduledTasks } = require('./services/scheduledTasks');
 
 // Middleware
