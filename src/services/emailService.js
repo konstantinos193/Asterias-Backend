@@ -158,7 +158,31 @@ async function sendEmail(type, data, options = {}) {
     
     // Admin emails are always sent to admin email
     const isAdminEmail = ['newBookingAlert', 'lowInventoryAlert'].includes(type);
-    const recipient = isAdminEmail ? process.env.ADMIN_EMAIL : (data.guestEmail || options.to);
+    
+    // For admin emails, try multiple fallback options
+    let recipient;
+    if (isAdminEmail) {
+      // Priority 1: Use options.to if provided
+      if (options.to) {
+        recipient = options.to;
+      }
+      // Priority 2: Use ADMIN_EMAIL environment variable
+      else if (process.env.ADMIN_EMAIL) {
+        recipient = process.env.ADMIN_EMAIL;
+      }
+      // Priority 3: Use EMAIL_USER as fallback (the sender email)
+      else if (process.env.EMAIL_USER) {
+        recipient = process.env.EMAIL_USER;
+        console.log('⚠️  ADMIN_EMAIL not set, using EMAIL_USER as fallback for admin notifications');
+      }
+      // Priority 4: Use hardcoded fallback
+      else {
+        recipient = 'asterias.apartmentskoronisia@gmail.com';
+        console.log('⚠️  No admin email configured, using hardcoded fallback for admin notifications');
+      }
+    } else {
+      recipient = data.guestEmail || options.to;
+    }
     
     if (!recipient) {
       throw new Error('No recipient email specified');
@@ -198,7 +222,7 @@ async function sendEmail(type, data, options = {}) {
     }
 
     const mailOptions = {
-      from: `"Asterias Homes" <${process.env.EMAIL_USER}>`,
+      from: `"Asterias Homes" <${process.env.EMAIL_USER || 'asterias.apartmentskoronisia@gmail.com'}>`,
       to: recipient,
       subject: template.subject(data, language),
       html: template.html(data, language),
@@ -321,11 +345,26 @@ async function sendTestEmail(type = 'bookingConfirmation', language = 'el') {
 // Send email to all admin users
 async function sendEmailToAllAdmins(template, data, customSubject = null) {
   try {
-    // Get admin email from environment variable
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (!adminEmail) {
-      console.log('No admin email configured for notifications');
-      return { success: false, reason: 'No admin email configured' };
+    // Get admin email with fallbacks
+    let adminEmail;
+    
+    // Priority 1: Use options.to if provided
+    if (data.to) {
+      adminEmail = data.to;
+    }
+    // Priority 2: Use ADMIN_EMAIL environment variable
+    else if (process.env.ADMIN_EMAIL) {
+      adminEmail = process.env.ADMIN_EMAIL;
+    }
+    // Priority 3: Use EMAIL_USER as fallback
+    else if (process.env.EMAIL_USER) {
+      adminEmail = process.env.EMAIL_USER;
+      console.log('⚠️  ADMIN_EMAIL not set, using EMAIL_USER as fallback for admin notifications');
+    }
+    // Priority 4: Use hardcoded fallback
+    else {
+      adminEmail = 'asterias.apartmentskoronisia@gmail.com';
+      console.log('⚠️  No admin email configured, using hardcoded fallback for admin notifications');
     }
 
     console.log(`📧 Sending ${template} to admin: ${adminEmail}`);
