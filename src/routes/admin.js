@@ -853,6 +853,7 @@ router.get('/room-availability', async (req, res) => {
         });
         
         roomAvailability.push({
+          _id: roomType._id, // Include the actual room type ID
           roomName: individualRoomName,
           roomType: roomType.name,
           isOccupied,
