@@ -200,24 +200,6 @@ router.get('/my-bookings', authenticateToken, async (req, res) => {
   }
 });
 
-// Get single booking by ID - no auth required for now
-router.get('/:id', async (req, res) => {
-  try {
-    const booking = await Booking.findById(req.params.id)
-      .populate('roomId', 'name type price capacity')
-      .populate('user', 'name email');
-
-    if (!booking) {
-      return res.status(404).json({ error: 'Booking not found' });
-    }
-
-    res.json({ booking });
-  } catch (error) {
-    console.error('Get booking error:', error);
-    res.status(500).json({ error: 'Failed to get booking' });
-  }
-});
-
 // Update booking status (admin only) - accept either API key or admin auth
 router.patch('/:id/status', requireApiKeyOrAdmin, [
   body('status').isIn(['CONFIRMED', 'PENDING', 'CANCELLED', 'CHECKED_IN', 'CHECKED_OUT'])
@@ -477,7 +459,7 @@ router.get('/calendar-availability', requireApiKey, async (req, res) => {
   }
 });
 
-// Get single booking by ID (for admin details page)
+// Get single booking by ID (for admin details page) - MUST be at the end to avoid route conflicts
 router.get('/:bookingId', requireApiKey, async (req, res) => {
   try {
     const { bookingId } = req.params;
