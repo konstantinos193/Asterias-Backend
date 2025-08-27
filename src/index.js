@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
 const app = express();
@@ -29,6 +30,7 @@ const { startScheduledTasks } = require('./services/scheduledTasks');
 
 // Middleware
 app.use(helmet());
+app.use(cookieParser()); // Add cookie parser middleware
 app.use(cors({
   origin: ['http://localhost:3000', 'https://asteriashome.gr'],
   credentials: true
