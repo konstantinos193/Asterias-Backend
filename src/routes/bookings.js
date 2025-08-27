@@ -5,7 +5,7 @@ const Room = require('../models/Room');
 const { authenticateToken, requireAdmin, requireApiKeyOrAdmin, optionalAuth } = require('../middleware/auth');
 const bookingcomService = require('../services/bookingcom.service');
 const requireApiKey = require('../middleware/apiKey');
-const { sendBookingConfirmation, sendNewBookingAlert, sendEmailToAllAdmins, detectLanguage } = require('../services/emailService');
+const { sendBookingConfirmation, sendNewBookingAlert, sendEmailToAllAdmins, detectLanguage, sendEmail, sendArrivalReminder, sendBookingConfirmationEmail } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -501,7 +501,24 @@ router.post('/:bookingId/send-email', requireApiKey, async (req, res) => {
         emailResult = await sendBookingConfirmationEmail(booking, req);
         break;
       case 'reminder':
-        emailResult = await sendArrivalReminder(booking, req);
+        // Format data for arrival reminder
+        const reminderData = {
+          bookingId: booking.bookingNumber,
+          guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
+          guestEmail: booking.guestInfo.email,
+          guestPhone: booking.guestInfo.phone,
+          roomName: booking.roomId?.name || 'Δωμάτιο',
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          checkInTime: '15:00',
+          checkOutTime: '11:00',
+          guests: `${booking.adults} adults${booking.children > 0 ? `, ${booking.children} children` : ''}`,
+          totalPrice: booking.totalAmount,
+          nights: Math.ceil((new Date(booking.checkOut) - new Date(booking.checkIn)) / (1000 * 60 * 60 * 24))
+        };
+        emailResult = await sendArrivalReminder(reminderData, { 
+          language: booking.guestInfo.language || 'el' 
+        });
         break;
       case 'custom':
         // Send custom email with custom message
