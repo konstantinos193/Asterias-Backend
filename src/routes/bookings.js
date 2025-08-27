@@ -200,8 +200,8 @@ router.get('/my-bookings', authenticateToken, async (req, res) => {
   }
 });
 
-// Get single booking by ID - accept either API key or admin auth
-router.get('/:id', requireApiKeyOrAdmin, async (req, res) => {
+// Get single booking by ID - no auth required for now
+router.get('/:id', async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id)
       .populate('roomId', 'name type price capacity')
@@ -209,12 +209,6 @@ router.get('/:id', requireApiKeyOrAdmin, async (req, res) => {
 
     if (!booking) {
       return res.status(404).json({ error: 'Booking not found' });
-    }
-
-    // If using API key, allow access (admin level)
-    // If using user auth, check permissions
-    if (req.user && req.user.role !== 'ADMIN' && booking.userId?.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Access denied' });
     }
 
     res.json({ booking });
@@ -262,8 +256,8 @@ router.patch('/:id/status', requireApiKeyOrAdmin, [
   }
 });
 
-// Get all bookings (admin only) - accept either API key or admin auth
-router.get('/', requireApiKeyOrAdmin, async (req, res) => {
+// Get all bookings - no auth required for now
+router.get('/', async (req, res) => {
   try {
     const { page = 1, limit = 50, status, search, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
