@@ -439,11 +439,19 @@ router.get('/dashboard', async (req, res) => {
       bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
     });
 
-    // Available rooms - sum all totalRooms from all room types
-    const allRooms = await Room.find({}, 'totalRooms');
+    // Available rooms - calculate individual room availability
+    const allRooms = await Room.find({}, 'name totalRooms');
     const totalRoomsCount = allRooms.reduce((sum, room) => sum + room.totalRooms, 0);
     
-    // Currently occupied rooms
+    // Get all individual room names (e.g., "Standard Apartment 1", "Standard Apartment 2", etc.)
+    const individualRoomNames = [];
+    allRooms.forEach(room => {
+      for (let i = 1; i <= room.totalRooms; i++) {
+        individualRoomNames.push(`${room.name} ${i}`);
+      }
+    });
+    
+    // Currently occupied rooms - count actual occupied individual rooms
     const occupiedRooms = await Booking.countDocuments({
       checkIn: { $lte: today },
       checkOut: { $gte: today },
@@ -813,6 +821,58 @@ router.put('/bookings/bulk/status', async (req, res) => {
   } catch (error) {
     console.error('Bulk update booking status error:', error);
     res.status(500).json({ error: 'Failed to update bookings' });
+  }
+});
+
+// Get detailed room availability - shows status of each individual room
+router.get('/room-availability', async (req, res) => {
+  try {
+    const today = new Date();
+    
+    // Get all room types with their individual rooms
+    const allRooms = await Room.find({}, 'name totalRooms price capacity size');
+    
+    // Get all active bookings for today
+    const activeBookings = await Booking.find({
+      checkIn: { $lte: today },
+      checkOut: { $gte: today },
+      bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
+    }).populate('roomId', 'name');
+    
+    // Create detailed room availability
+    const roomAvailability = [];
+    
+    allRooms.forEach(roomType => {
+      for (let i = 1; i <= roomType.totalRooms; i++) {
+        const individualRoomName = `${roomType.name} ${i}`;
+        
+        // Check if this individual room is occupied
+        const isOccupied = activeBookings.some(booking => {
+          const bookingRoomName = booking.roomId?.name;
+          return bookingRoomName === individualRoomName;
+        });
+        
+        roomAvailability.push({
+          roomName: individualRoomName,
+          roomType: roomType.name,
+          isOccupied,
+          price: roomType.price,
+          capacity: roomType.capacity,
+          size: roomType.size,
+          status: isOccupied ? 'Occupied' : 'Available'
+        });
+      }
+    });
+    
+    res.json({
+      totalRooms: roomAvailability.length,
+      availableRooms: roomAvailability.filter(room => !room.isOccupied).length,
+      occupiedRooms: roomAvailability.filter(room => room.isOccupied).length,
+      rooms: roomAvailability
+    });
+  } catch (error) {
+    console.error('Room availability error:', error);
+    res.status(500).json({ error: 'Failed to get room availability' });
   }
 });
 
