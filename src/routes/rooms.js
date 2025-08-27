@@ -99,8 +99,8 @@ router.get('/:id/availability', [
       return res.status(404).json({ error: 'Room not found' });
     }
 
-    // Check availability
-    const isAvailable = await Booking.isApartmentAvailable(roomId, checkIn, checkOut);
+    // Check availability for individual room
+    const isAvailable = await Booking.isIndividualRoomAvailable(roomId, checkIn, checkOut);
 
     res.json({
       roomId,

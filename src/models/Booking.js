@@ -139,6 +139,8 @@ bookingSchema.statics.isApartmentAvailable = async function(roomTypeId, checkIn,
     throw new Error('Room type not found');
   }
 
+  // For individual room bookings, we need to check if THIS specific room is available
+  // Since each room has totalRooms: 1, we check if there are any conflicting bookings for this specific roomId
   const query = {
     roomId: roomTypeId,
     bookingStatus: { $nin: ['CANCELLED'] },
@@ -152,8 +154,20 @@ bookingSchema.statics.isApartmentAvailable = async function(roomTypeId, checkIn,
   }
 
   const conflictingBookings = await this.countDocuments(query);
-
-  return conflictingBookings < roomType.totalRooms;
+  
+  // Since each room is individual (totalRooms: 1), we can only book if there are 0 conflicts
+  const isAvailable = conflictingBookings === 0;
+  
+  console.log(`Availability check for room ${roomTypeId}:`, {
+    roomId: roomTypeId,
+    checkIn: new Date(checkIn),
+    checkOut: new Date(checkOut),
+    conflictingBookings,
+    totalRooms: roomType.totalRooms,
+    isAvailable
+  });
+  
+  return isAvailable;
 };
 
 // Method to get the number of available apartments for a date range
@@ -164,8 +178,19 @@ bookingSchema.statics.getAvailableApartmentCount = async function(roomTypeId, ch
         return 0;
     }
 
+    // For individual rooms, we need to count how many rooms of this type are available
+    // Since all 7 rooms are identical "Standard Apartment" type, we need to check availability across all rooms
+    // First, get all rooms of this type
+    const allRoomsOfType = await Room.find({ nameKey: roomType.nameKey });
+    const totalRoomsOfType = allRoomsOfType.length;
+    
+    if (totalRoomsOfType === 0) {
+        return 0;
+    }
+
+    // Check how many rooms are booked for the given dates
     const query = {
-        roomId: roomTypeId,
+        roomId: { $in: allRoomsOfType.map(room => room._id) },
         bookingStatus: { $nin: ['CANCELLED'] },
         $or: [
             { checkIn: { $lt: checkOut }, checkOut: { $gt: checkIn } },
@@ -173,9 +198,45 @@ bookingSchema.statics.getAvailableApartmentCount = async function(roomTypeId, ch
     };
 
     const conflictingBookings = await this.countDocuments(query);
-    const availableCount = roomType.totalRooms - conflictingBookings;
+    const availableCount = totalRoomsOfType - conflictingBookings;
+
+    console.log(`Available count for room type ${roomType.nameKey}:`, {
+        totalRoomsOfType,
+        conflictingBookings,
+        availableCount,
+        checkIn: new Date(checkIn),
+        checkOut: new Date(checkOut)
+    });
 
     return availableCount > 0 ? availableCount : 0;
+};
+
+// Method to check if a specific individual room is available
+bookingSchema.statics.isIndividualRoomAvailable = async function(roomId, checkIn, checkOut, excludeBookingId = null) {
+  const query = {
+    roomId: roomId,
+    bookingStatus: { $nin: ['CANCELLED'] },
+    $or: [
+      { checkIn: { $lt: checkOut }, checkOut: { $gt: checkIn } }, // Overlaps
+    ]
+  };
+
+  if (excludeBookingId) {
+    query._id = { $ne: excludeBookingId };
+  }
+
+  const conflictingBookings = await this.countDocuments(query);
+  const isAvailable = conflictingBookings === 0;
+  
+  console.log(`Individual room availability check for room ${roomId}:`, {
+    roomId,
+    checkIn: new Date(checkIn),
+    checkOut: new Date(checkOut),
+    conflictingBookings,
+    isAvailable
+  });
+  
+  return isAvailable;
 };
 
 

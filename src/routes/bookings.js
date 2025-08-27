@@ -47,10 +47,10 @@ router.post('/', [
       return res.status(404).json({ error: 'Room not found' });
     }
 
-    // Check if an apartment of this type is available for the dates
-    const isAvailable = await Booking.isApartmentAvailable(roomId, checkIn, checkOut);
+    // Check if this specific individual room is available for the dates
+    const isAvailable = await Booking.isIndividualRoomAvailable(roomId, checkIn, checkOut);
     if (!isAvailable) {
-      return res.status(400).json({ error: 'Sorry, no apartments are available for the selected dates.' });
+      return res.status(400).json({ error: 'Sorry, this specific room is not available for the selected dates.' });
     }
 
     // Check capacity
