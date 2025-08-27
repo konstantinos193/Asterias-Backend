@@ -200,19 +200,20 @@ router.get('/my-bookings', authenticateToken, async (req, res) => {
   }
 });
 
-// Get single booking by ID
-router.get('/:id', authenticateToken, async (req, res) => {
+// Get single booking by ID - accept either API key or admin auth
+router.get('/:id', requireApiKeyOrAdmin, async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id)
-      .populate('room')
+      .populate('roomId', 'name type price capacity')
       .populate('user', 'name email');
 
     if (!booking) {
       return res.status(404).json({ error: 'Booking not found' });
     }
 
-    // Check if user can access this booking
-    if (req.user.role !== 'ADMIN' && booking.userId?.toString() !== req.user._id.toString()) {
+    // If using API key, allow access (admin level)
+    // If using user auth, check permissions
+    if (req.user && req.user.role !== 'ADMIN' && booking.userId?.toString() !== req.user._id.toString()) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -223,12 +224,10 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Update booking status (admin only)
-router.patch('/:id/status', authenticateToken, requireAdmin, [
-  body('bookingStatus').isIn(['CONFIRMED', 'PENDING', 'CANCELLED', 'CHECKED_IN', 'CHECKED_OUT'])
+// Update booking status (admin only) - accept either API key or admin auth
+router.patch('/:id/status', requireApiKeyOrAdmin, [
+  body('status').isIn(['CONFIRMED', 'PENDING', 'CANCELLED', 'CHECKED_IN', 'CHECKED_OUT'])
     .withMessage('Valid booking status is required'),
-  body('paymentStatus').optional().isIn(['PENDING', 'PAID', 'FAILED', 'REFUNDED'])
-    .withMessage('Valid payment status is required'),
   body('notes').optional().trim()
 ], async (req, res) => {
   try {
@@ -237,18 +236,17 @@ router.patch('/:id/status', authenticateToken, requireAdmin, [
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { bookingStatus, paymentStatus, notes } = req.body;
+    const { status, notes } = req.body;
     const updates = {};
 
-    if (bookingStatus) updates.bookingStatus = bookingStatus;
-    if (paymentStatus) updates.paymentStatus = paymentStatus;
+    if (status) updates.status = status;
     if (notes !== undefined) updates.notes = notes;
 
     const booking = await Booking.findByIdAndUpdate(
       req.params.id,
       updates,
       { new: true }
-    ).populate('room');
+    ).populate('roomId', 'name type price capacity');
 
     if (!booking) {
       return res.status(404).json({ error: 'Booking not found' });
