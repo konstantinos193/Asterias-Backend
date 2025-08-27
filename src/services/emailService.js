@@ -10,7 +10,7 @@ function initializeEmailTransporter() {
   try {
     // Priority 1: Use existing SMTP configuration from .env
     if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-      transporter = nodemailer.createTransporter({
+      transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: process.env.SMTP_PORT || 587,
         secure: false, // true for 465, false for other ports
@@ -26,7 +26,7 @@ function initializeEmailTransporter() {
     }
     // Priority 2: Use Gmail service configuration with APP PASSWORD (RECOMMENDED)
     else if (process.env.EMAIL_USER && process.env.EMAIL_APP_PASSWORD) {
-      transporter = nodemailer.createTransporter({
+      transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: {
           user: process.env.EMAIL_USER,
@@ -41,7 +41,7 @@ function initializeEmailTransporter() {
       console.log('⚠️  This is less secure and may be blocked by Google.');
       console.log('⚠️  Please enable 2FA and generate an app password for better security.');
       
-      transporter = nodemailer.createTransporter({
+      transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: {
           user: process.env.EMAIL_USER,
@@ -52,7 +52,7 @@ function initializeEmailTransporter() {
     }
     // Priority 4: Use Gmail SMTP fallback with APP PASSWORD if available
     else if (process.env.EMAIL_USER && process.env.EMAIL_APP_PASSWORD) {
-      transporter = nodemailer.createTransporter({
+      transporter = nodemailer.createTransport({
         host: 'smtp.gmail.com',
         port: 587,
         secure: false,
@@ -72,7 +72,7 @@ function initializeEmailTransporter() {
       console.log('⚠️  This is the least secure option and may be blocked by Google.');
       console.log('⚠️  Please enable 2FA and generate an app password for better security.');
       
-      transporter = nodemailer.createTransporter({
+      transporter = nodemailer.createTransport({
         host: 'smtp.gmail.com',
         port: 587,
         secure: false,
