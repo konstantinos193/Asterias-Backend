@@ -502,4 +502,87 @@ router.get('/:bookingId', requireApiKey, async (req, res) => {
   }
 });
 
+// Send email to guest from admin panel
+router.post('/:bookingId/send-email', requireApiKey, async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { emailType, customMessage } = req.body;
+    
+    if (!bookingId) {
+      return res.status(400).json({ error: 'Booking ID is required' });
+    }
+
+    if (!emailType) {
+      return res.status(400).json({ error: 'Email type is required' });
+    }
+
+    const booking = await Booking.findById(bookingId)
+      .populate('roomId', 'name totalRooms price capacity size');
+
+    if (!booking) {
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+
+    if (!booking.guestInfo || !booking.guestInfo.email) {
+      return res.status(400).json({ error: 'Guest email not found' });
+    }
+
+    let emailResult;
+    const emailData = {
+      guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
+      guestEmail: booking.guestInfo.email,
+      bookingNumber: booking.bookingNumber,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      roomName: booking.roomId?.name || 'Δωμάτιο',
+      totalAmount: booking.totalAmount,
+      customMessage: customMessage || ''
+    };
+
+    switch (emailType) {
+      case 'confirmation':
+        emailResult = await sendBookingConfirmationEmail(booking, req);
+        break;
+      case 'reminder':
+        emailResult = await sendArrivalReminder(booking, req);
+        break;
+      case 'custom':
+        // Send custom email with custom message
+        emailResult = await sendEmail('customMessage', emailData, { 
+          language: booking.guestInfo.language || 'el' 
+        });
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid email type' });
+    }
+
+    if (emailResult.success) {
+      // Add to booking history
+      if (!booking.history) booking.history = [];
+      booking.history.push({
+        date: new Date(),
+        action: `Αποστολή email: ${emailType === 'confirmation' ? 'Επιβεβαίωση' : emailType === 'reminder' ? 'Υπενθύμιση' : 'Προσωπικό μήνυμα'}`,
+        user: 'Διαχειριστής'
+      });
+      await booking.save();
+
+      res.json({ 
+        success: true, 
+        message: `Email sent successfully to ${booking.guestInfo.email}`,
+        emailType 
+      });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to send email',
+        details: emailResult.error 
+      });
+    }
+
+  } catch (error) {
+    console.error('Send email error:', error);
+    res.status(500).json({ error: 'Failed to send email' });
+  }
+});
+
 module.exports = router; 

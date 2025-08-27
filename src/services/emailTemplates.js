@@ -152,6 +152,30 @@ function getBaseTemplate(content, language = 'el') {
           font-size: 14px;
           font-weight: 500;
         }
+        .message-card {
+          background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+          border-radius: 12px;
+          padding: 25px;
+          margin: 25px 0;
+          border-left: 4px solid #1976d2;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+        .message-card h3 {
+          color: #1976d2;
+          margin: 0 0 20px 0;
+          font-size: 20px;
+          font-weight: 600;
+        }
+        .message-content {
+          background: white;
+          padding: 20px;
+          border-radius: 8px;
+          border: 1px solid #e3f2fd;
+          font-size: 16px;
+          line-height: 1.6;
+          color: #2d3748;
+          white-space: pre-line;
+        }
         .payment-status.paid {
           background: #d4edda;
           color: #155724;
@@ -656,8 +680,90 @@ const emailTemplates = {
       
       ${data.rooms.map(room => `${room.name}: ${room.available}/${room.total}`).join('\n')}
     `
-  }
-};
+  },
+
+    // Custom message from admin to guest
+    customMessage: {
+      subject: (data, lang = 'el') => `Μήνυμα από το Asterias Homes - Κράτηση ${data.bookingNumber}`,
+      html: (data, lang = 'el') => {
+        const content = `
+          <div class="greeting">Αγαπητέ/ή ${data.guestName},</div>
+          
+          <div class="main-text">
+            Έχετε λάβει ένα προσωπικό μήνυμα από το προσωπικό του Asterias Homes σχετικά με την κράτησή σας.
+          </div>
+          
+          <div class="info-card">
+            <h3>📋 Στοιχεία Κράτησης</h3>
+            <div class="info-row">
+              <span class="info-label">Αριθμός Κράτησης:</span>
+              <span class="info-value">${data.bookingNumber}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Δωμάτιο:</span>
+              <span class="info-value">${data.roomName}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Check-in:</span>
+              <span class="info-value">${formatDate(data.checkIn, 'el')}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Check-out:</span>
+              <span class="info-value">${formatDate(data.checkOut, 'el')}</span>
+            </div>
+          </div>
+          
+          <div class="message-card">
+            <h3>💬 Προσωπικό Μήνυμα</h3>
+            <div class="message-content">
+              ${data.customMessage.replace(/\n/g, '<br>')}
+            </div>
+          </div>
+          
+          <div class="contact-section">
+            <h4>📞 Επικοινωνία</h4>
+            <div class="contact-info">
+              <a href="mailto:asterias.apartmentskoronisia@gmail.com" class="contact-item">
+                📧 asterias.apartmentskoronisia@gmail.com
+              </a>
+              <a href="tel:+306972705881" class="contact-item">
+                📞 +30 6972705881
+              </a>
+            </div>
+          </div>
+          
+          <div class="footer">
+            <p>Με εκτίμηση,<br><strong>Η Ομάδα του Asterias Homes</strong></p>
+          </div>
+        `;
+        
+        return getBaseTemplate(content, 'el');
+      },
+      text: (data, lang = 'el') => `
+        Μήνυμα από το Asterias Homes - Κράτηση ${data.bookingNumber}
+        
+        Αγαπητέ/ή ${data.guestName},
+        
+        Έχετε λάβει ένα προσωπικό μήνυμα από το προσωπικό του Asterias Homes σχετικά με την κράτησή σας.
+        
+        Στοιχεία Κράτησης:
+        - Αριθμός Κράτησης: ${data.bookingNumber}
+        - Δωμάτιο: ${data.roomName}
+        - Check-in: ${formatDate(data.checkIn, 'el')}
+        - Check-out: ${formatDate(data.checkOut, 'el')}
+        
+        Προσωπικό Μήνυμα:
+        ${data.customMessage}
+        
+        Επικοινωνία:
+        - Email: asterias.apartmentskoronisia@gmail.com
+        - Τηλέφωνο: +30 6972705881
+        
+        Με εκτίμηση,
+        Η Ομάδα του Asterias Homes
+      `
+    }
+  };
 
 module.exports = {
   emailTemplates,
