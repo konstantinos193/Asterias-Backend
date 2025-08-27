@@ -459,49 +459,6 @@ router.get('/calendar-availability', requireApiKey, async (req, res) => {
   }
 });
 
-// Get single booking by ID (for admin details page) - MUST be at the end to avoid route conflicts
-router.get('/:bookingId', requireApiKey, async (req, res) => {
-  try {
-    const { bookingId } = req.params;
-    
-    if (!bookingId) {
-      return res.status(400).json({ error: 'Booking ID is required' });
-    }
-
-    const booking = await Booking.findById(bookingId)
-      .populate('roomId', 'name totalRooms price capacity size')
-      .populate('userId', 'name email');
-
-    if (!booking) {
-      return res.status(404).json({ error: 'Booking not found' });
-    }
-
-    // Add booking history if it doesn't exist
-    if (!booking.history || booking.history.length === 0) {
-      booking.history = [
-        {
-          date: booking.createdAt,
-          action: 'Δημιουργία κράτησης',
-          user: 'Σύστημα'
-        }
-      ];
-      
-      if (booking.bookingStatus === 'CONFIRMED') {
-        booking.history.push({
-          date: new Date(booking.createdAt.getTime() + 1000 * 60 * 38), // 38 minutes later
-          action: 'Επιβεβαίωση κράτησης',
-          user: 'Σύστημα'
-        });
-      }
-    }
-
-    res.json({ booking });
-  } catch (error) {
-    console.error('Get booking error:', error);
-    res.status(500).json({ error: 'Failed to get booking' });
-  }
-});
-
 // Send email to guest from admin panel
 router.post('/:bookingId/send-email', requireApiKey, async (req, res) => {
   try {
@@ -582,6 +539,49 @@ router.post('/:bookingId/send-email', requireApiKey, async (req, res) => {
   } catch (error) {
     console.error('Send email error:', error);
     res.status(500).json({ error: 'Failed to send email' });
+  }
+});
+
+// Get single booking by ID (for admin details page) - MUST be at the end to avoid route conflicts
+router.get('/:bookingId', requireApiKey, async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    
+    if (!bookingId) {
+      return res.status(400).json({ error: 'Booking ID is required' });
+    }
+
+    const booking = await Booking.findById(bookingId)
+      .populate('roomId', 'name totalRooms price capacity size')
+      .populate('userId', 'name email');
+
+    if (!booking) {
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+
+    // Add booking history if it doesn't exist
+    if (!booking.history || booking.history.length === 0) {
+      booking.history = [
+        {
+          date: booking.createdAt,
+          action: 'Δημιουργία κράτησης',
+          user: 'Σύστημα'
+        }
+      ];
+      
+      if (booking.bookingStatus === 'CONFIRMED') {
+        booking.history.push({
+          date: new Date(booking.createdAt.getTime() + 1000 * 60 * 38), // 38 minutes later
+          action: 'Επιβεβαίωση κράτησης',
+          user: 'Σύστημα'
+        });
+      }
+    }
+
+    res.json({ booking });
+  } catch (error) {
+    console.error('Get booking error:', error);
+    res.status(500).json({ error: 'Failed to get booking' });
   }
 });
 
