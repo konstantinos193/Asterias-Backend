@@ -113,6 +113,26 @@ const connectDB = async () => {
     await mongoose.connect(mongoURI);
     
     console.log('✅ Connected to MongoDB successfully');
+    
+    // Fix problematic database indexes
+    try {
+      const Booking = require('./models/Booking');
+      await Booking.dropProblematicIndexes();
+      
+      // If normal fix fails, try emergency fix
+      const indexes = await Booking.collection.indexes();
+      const stillProblematic = indexes.find(index => 
+        index.key && index.key.bookingcom_booking_id === 1 && index.unique === true
+      );
+      
+      if (stillProblematic) {
+        console.log('🚨 Normal fix failed, attempting emergency collection recreation...');
+        await Booking.emergencyFixCollection();
+      }
+      
+    } catch (error) {
+      console.error('⚠️ Warning: Could not fix database indexes:', error.message);
+    }
   } catch (error) {
     console.error('❌ MongoDB connection error:', error.message);
     process.exit(1);

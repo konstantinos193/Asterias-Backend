@@ -96,9 +96,7 @@ const bookingSchema = new mongoose.Schema({
   },
   bookingcom_booking_id: {
     type: String,
-    default: null,
-    unique: true,
-    sparse: true
+    default: null
   },
   source: {
     type: String,
@@ -114,6 +112,84 @@ bookingSchema.index({ roomId: 1, checkIn: 1, checkOut: 1 });
 bookingSchema.index({ userId: 1 });
 bookingSchema.index({ paymentStatus: 1 });
 bookingSchema.index({ bookingStatus: 1 });
+
+// Method to drop problematic indexes (run this once to fix existing database)
+bookingSchema.statics.dropProblematicIndexes = async function() {
+  try {
+    const collection = this.collection;
+    const indexes = await collection.indexes();
+    
+    console.log('🔍 Current database indexes:', indexes.map(idx => ({
+      name: idx.name,
+      key: idx.key,
+      unique: idx.unique,
+      sparse: idx.sparse
+    })));
+    
+    // Find and drop the problematic unique index on bookingcom_booking_id
+    const problematicIndex = indexes.find(index => 
+      index.key && index.key.bookingcom_booking_id === 1 && index.unique === true
+    );
+    
+    if (problematicIndex) {
+      console.log('🚨 Found problematic unique index:', problematicIndex.name);
+      try {
+        await collection.dropIndex(problematicIndex.name);
+        console.log('✅ Successfully dropped problematic index:', problematicIndex.name);
+      } catch (dropError) {
+        console.error('❌ Failed to drop index:', problematicIndex.name, dropError.message);
+      }
+    } else {
+      console.log('✅ No problematic unique indexes found on bookingcom_booking_id');
+    }
+    
+    // Verify the index was dropped
+    const updatedIndexes = await collection.indexes();
+    const stillProblematic = updatedIndexes.find(index => 
+      index.key && index.key.bookingcom_booking_id === 1 && index.unique === true
+    );
+    
+    if (!stillProblematic) {
+      console.log('✅ Confirmed: No more problematic indexes on bookingcom_booking_id');
+    } else {
+      console.log('⚠️ Warning: Problematic index still exists:', stillProblematic.name);
+    }
+    
+  } catch (error) {
+    console.error('❌ Error dropping indexes:', error.message);
+  }
+};
+
+// Emergency method to recreate collection without problematic indexes
+bookingSchema.statics.emergencyFixCollection = async function() {
+  try {
+    const collection = this.collection;
+    const collectionName = collection.name;
+    
+    console.log('🚨 Emergency: Attempting to recreate collection without problematic indexes...');
+    
+    // Get all documents from current collection
+    const allDocuments = await collection.find({}).toArray();
+    console.log(`📊 Found ${allDocuments.length} documents to preserve`);
+    
+    // Drop the current collection (this will remove all indexes)
+    await collection.drop();
+    console.log('🗑️ Dropped problematic collection');
+    
+    // Recreate collection by inserting documents back
+    if (allDocuments.length > 0) {
+      const newCollection = mongoose.connection.db.collection(collectionName);
+      await newCollection.insertMany(allDocuments);
+      console.log('✅ Recreated collection with documents');
+    }
+    
+    console.log('✅ Emergency fix completed - collection recreated without problematic indexes');
+    
+  } catch (error) {
+    console.error('❌ Emergency fix failed:', error.message);
+    throw error;
+  }
+};
 
 // Note: Booking number generation is now handled manually in the payment routes
 // to ensure it's set before validation occurs
