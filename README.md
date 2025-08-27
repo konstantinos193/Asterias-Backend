@@ -1,554 +1,289 @@
-# Asterias Homes Backend API
+# Asterias Homes - Backend API
 
-A robust Node.js/Express backend server for the Asterias Homes apartment rental system. Features multilingual email automation, Stripe payment processing, MongoDB integration, and comprehensive admin functionality.
+## Overview
+This is the backend service for the Asterias Homes hotel management system. Built with Node.js, Express.js, and MongoDB, it provides a robust API for room bookings, guest management, admin operations, and payment processing.
 
-## 🏗️ Architecture Overview
+## Technologies Used
+- **Runtime**: Node.js 18+
+- **Framework**: Express.js 4.x
+- **Database**: MongoDB with Mongoose ODM
+- **Authentication**: JWT (JSON Web Tokens)
+- **Payment**: Stripe API integration
+- **Email**: Nodemailer with Gmail SMTP
+- **Validation**: Express-validator
+- **CORS**: Cross-origin resource sharing enabled
 
-### Core Technologies
-- **Node.js**: Runtime environment
-- **Express.js**: Web application framework
-- **MongoDB**: Document database with Mongoose ODM
-- **JWT**: Authentication and authorization
-- **Stripe**: Payment processing
-- **Nodemailer**: Email delivery system
-- **node-cron**: Scheduled task automation
+## Requirements
+- **Node.js**: Version 18.0.0 or higher
+- **npm**: Version 8.0.0 or higher
+- **MongoDB**: Version 5.0+ (local or MongoDB Atlas)
+- **Stripe Account**: For payment processing
+- **Gmail Account**: For email notifications
 
-### Key Features
-- **RESTful API**: Clean, documented endpoints
-- **Multilingual Email System**: Automated emails in Greek, English, German
-- **Payment Processing**: Secure Stripe integration
-- **Admin Dashboard**: Comprehensive management interface
-- **Real-time Analytics**: Booking and revenue reporting
-- **Automated Tasks**: Email reminders and inventory alerts
+## Installation
 
-## 📁 Project Structure
-
-```
-backend/
-├── src/
-│   ├── index.js                    # Main server entry point
-│   ├── models/                     # Mongoose database models
-│   │   ├── Booking.js             # Booking schema with language support
-│   │   ├── Room.js                # Room/apartment definitions
-│   │   ├── User.js                # Admin user management
-│   │   ├── Offer.js               # Special offers and discounts
-│   │   ├── Contact.js             # Contact form submissions
-│   │   └── Settings.js            # System configuration
-│   ├── routes/                     # API route handlers
-│   │   ├── admin.js               # Admin dashboard endpoints
-│   │   ├── auth.js                # Authentication routes
-│   │   ├── bookings.js            # Booking management
-│   │   ├── rooms.js               # Room/apartment API
-│   │   ├── offers.js              # Special offers
-│   │   ├── payments.js            # Stripe payment processing
-│   │   ├── contact.js             # Contact form handling
-│   │   ├── images.js              # Image serving
-│   │   └── bookingcom.webhook.js  # Third-party integrations
-│   ├── services/                   # Business logic services
-│   │   ├── emailService.js        # Multilingual email system
-│   │   ├── scheduledTasks.js      # Automated background tasks
-│   │   └── bookingcom.service.js  # Booking.com integration
-│   ├── middleware/                 # Express middleware
-│   │   ├── auth.js                # JWT authentication
-│   │   ├── apiKey.js              # API key validation
-│   │   └── settings.js            # Settings management
-│   └── translations/               # Email translations
-│       └── emailTranslations.js   # Multi-language templates
-├── test-backend.js                 # Backend connectivity tests
-├── test-mongodb.js                 # Database connection tests
-├── create-admin.js                 # Admin user creation script
-├── check-bookings.js               # Booking validation script
-├── package.json                    # Dependencies and scripts
-├── env.example                     # Environment template
-└── README.md                       # This file
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Node.js 18+ and pnpm
-- MongoDB Atlas account
-- Stripe account
-- Gmail account for email sending
-
-### Installation
-
-1. **Install dependencies**
+### 1. Clone and Navigate
 ```bash
-cd backend
-   pnpm install
+git clone <repository-url>
+cd Asterias-Homes/backend
 ```
 
-2. **Environment setup**
+### 2. Install Dependencies
 ```bash
-   cp env.example .env
-   # Edit .env with your configuration
+npm install
 ```
 
-3. **Create admin user**
-```bash
-   node create-admin.js
-   ```
-
-4. **Start the server**
-   ```bash
-   # Development
-   pnpm dev
-   
-   # Production
-   pnpm start
-   ```
-
-## ⚙️ Environment Variables
-
-### Required Configuration (.env)
+### 3. Environment Configuration
+Create a `.env` file in the backend directory:
 
 ```env
 # Server Configuration
 NODE_ENV=development
 PORT=3001
+FRONTEND_URL=http://localhost:3000
 
 # Database
-MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/asterias-homes
+MONGODB_URI=mongodb://localhost:27017/asterias-homes
+# OR for MongoDB Atlas:
+# MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/asterias-homes
 
-# Authentication
-JWT_SECRET=your-super-secure-jwt-secret-key
+# JWT Authentication
+JWT_SECRET=your_super_secret_jwt_key_here
+JWT_EXPIRES_IN=7d
 
-# Payment Processing
-STRIPE_SECRET_KEY=sk_test_... (or sk_live_... for production)
+# Stripe Payment
+STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key
+STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
 
-# Email System - Choose ONE option:
+# Email Configuration (Gmail)
+EMAIL_USER=your_gmail@gmail.com
+EMAIL_APP_PASSWORD=your_gmail_app_password
+# OR for regular password (less secure):
+# EMAIL_PASSWORD=your_gmail_password
 
-# OPTION 1: App Password (RECOMMENDED - more secure)
-EMAIL_USER=asterias.apartmentskoronisia@gmail.com
-EMAIL_APP_PASSWORD=your-16-digit-app-password
+# Admin Configuration
+ADMIN_EMAIL=admin@asteriashomes.com
+ADMIN_PASSWORD=secure_admin_password
 
-# OPTION 2: Regular Password (requires "Less secure app access")
-EMAIL_USER=asterias.apartmentskoronisia@gmail.com
-EMAIL_PASSWORD=your-gmail-password
-
-# Admin email (OPTIONAL - fallback only)
-# System sends to ALL admin users in database first
-# This is only used if database fails or no admin users exist
-ADMIN_EMAIL=asterias.apartmentskoronisia@gmail.com
-
-# Application URLs
-FRONTEND_URL=http://localhost:3000
-BACKEND_URL=http://localhost:3001
-
-# Optional: Third-party Integrations
-BOOKINGCOM_API_URL=https://api.booking.com/v1
-BOOKINGCOM_API_USER=your-booking-api-user
-BOOKINGCOM_API_PASSWORD=your-booking-api-password
+# API Keys
+API_KEY=your_api_key_for_admin_access
 ```
 
-### Email Setup (Gmail)
+### 4. Database Setup
+The application will automatically create the necessary collections and indexes on first run.
 
-1. **Create dedicated business Gmail account**
-2. **Enable 2-Factor Authentication**
-3. **Generate App Password**:
-   - Google Account → Security → 2-Step Verification → App passwords
-   - Select "Mail" and generate password
-4. **Update environment variables**
+## Running the Project
 
-## 📧 Multilingual Email System
-
-### Features
-- **3 Languages**: Greek (el), English (en), German (de)
-- **Smart Detection**: Language from booking data, URL path, Accept-Language header
-- **Professional Templates**: Responsive HTML emails with branding
-- **Automated Sending**: Booking confirmations, arrival reminders, admin alerts
-
-### Email Types
-
-#### Customer Emails (in customer's language)
-- **Booking Confirmation**: Sent immediately after successful booking
-- **Arrival Reminder**: Sent 24 hours before check-in (configurable)
-
-#### Admin Emails (always in Greek)
-- **New Booking Alert**: Sent to ALL registered admin users with customer language noted
-- **Low Inventory Alert**: Sent to ALL registered admin users when availability drops below threshold
-- **Multi-Admin Support**: Automatically sends to all users with role 'ADMIN' and email notifications enabled
-
-### Testing Email System
-
+### Development Mode
 ```bash
-# Test email sending
-node -e "
-const { sendTestEmail } = require('./src/services/emailService');
-sendTestEmail('bookingConfirmation', 'en').then(console.log);
-"
+npm run dev
+```
+This starts the server with nodemon for automatic restarts on file changes.
 
-# Test specific templates
-node -e "
-const { sendTestEmail } = require('./src/services/emailService');
-sendTestEmail('arrivalReminder', 'de').then(console.log);
-sendTestEmail('newBookingAlert', 'el').then(console.log);
-"
-
-# Test multi-admin email system
-node test-admin-emails.js
+### Production Mode
+```bash
+npm start
 ```
 
-## 🔄 Scheduled Tasks
+### Build for Production
+```bash
+npm run build
+```
 
-Automated background processes:
-
-### Arrival Reminders
-- **Frequency**: Every hour
-- **Function**: Check for bookings with check-in tomorrow
-- **Action**: Send reminder emails in customer's language
-
-### Inventory Monitoring  
-- **Frequency**: Twice daily (9 AM, 6 PM)
-- **Function**: Check low room availability
-- **Action**: Alert admin when availability drops
-
-### Cleanup Tasks
-- **Frequency**: Daily at 2 AM
-- **Function**: Clean old notification flags
-- **Action**: Maintain database hygiene
-
-## 📊 API Endpoints
+## API Endpoints
 
 ### Authentication
-```
-POST   /api/auth/login         # Admin login
-POST   /api/auth/logout        # Logout
-GET    /api/auth/profile       # Get user profile
-GET    /api/auth/session       # Check session status
-```
+- `POST /api/auth/login` - Admin login
+- `POST /api/auth/logout` - Admin logout
+- `GET /api/auth/profile` - Get admin profile
 
 ### Bookings
-```
-GET    /api/bookings           # List all bookings
-POST   /api/bookings           # Create new booking
-GET    /api/bookings/:id       # Get booking details
-PUT    /api/bookings/:id       # Update booking
-DELETE /api/bookings/:id       # Cancel booking
-```
+- `GET /api/bookings` - Get all bookings
+- `GET /api/bookings/:id` - Get specific booking
+- `POST /api/bookings` - Create new booking
+- `PUT /api/bookings/:id` - Update booking
+- `DELETE /api/bookings/:id` - Delete booking
 
-### Rooms/Apartments
-```
-GET    /api/rooms              # List all rooms
-POST   /api/rooms              # Create room (admin)
-GET    /api/rooms/:id          # Get room details
-PUT    /api/rooms/:id          # Update room (admin)
-DELETE /api/rooms/:id          # Delete room (admin)
-```
+### Admin Operations
+- `GET /api/admin/bookings` - Get all admin bookings
+- `PUT /api/admin/bookings/:id/status` - Update booking status
+- `PUT /api/admin/bookings/:id/cancel` - Cancel booking
+- `DELETE /api/admin/bookings/bulk` - Bulk delete bookings
+- `PUT /api/admin/bookings/bulk/status` - Bulk update status
+
+### Rooms
+- `GET /api/admin/rooms` - Get all rooms
+- `POST /api/admin/rooms` - Create new room
+- `PUT /api/admin/rooms/:id` - Update room
+- `DELETE /api/admin/rooms/:id` - Delete room
+
+### Analytics & Reports
+- `GET /api/admin/analytics` - Get comprehensive analytics
+- `GET /api/admin/revenue-reports` - Get revenue reports
 
 ### Payments
+- `POST /api/payments/create-payment-intent` - Create Stripe payment intent
+- `POST /api/payments/confirm-payment` - Confirm payment
+- `POST /api/payments/create-cash-booking` - Create cash booking
+
+## Database Models
+
+### Booking Schema
+- Guest information (name, email, phone)
+- Room details and dates
+- Payment status and amount
+- Booking status (PENDING, CONFIRMED, CANCELLED, etc.)
+- Admin notes and cancellation reasons
+
+### Room Schema
+- Room details (name, description, price)
+- Capacity and amenities
+- Availability status
+- Images and features
+
+### User Schema
+- Admin user accounts
+- Authentication details
+- Role-based permissions
+
+## Security Features
+
+### Authentication
+- JWT-based authentication for admin routes
+- Secure password hashing with bcrypt
+- Session management and timeout
+
+### API Security
+- Input validation and sanitization
+- CORS configuration
+- Rate limiting (can be configured)
+- Request size limits
+
+### Data Protection
+- MongoDB injection protection
+- XSS prevention
+- CSRF protection
+
+## Email System
+
+### Configuration
+The system uses Gmail SMTP for sending emails. You can configure:
+- Customer booking confirmations
+- Admin notifications
+- Arrival reminders
+- Cancellation confirmations
+
+### Templates
+Email templates support multiple languages (Greek, English, German) and are responsive for mobile devices.
+
+## Payment Integration
+
+### Stripe Setup
+1. Create a Stripe account
+2. Get your API keys from the dashboard
+3. Configure webhook endpoints
+4. Test with Stripe test cards
+
+### Supported Payment Methods
+- Credit/Debit cards
+- Cash on arrival
+- Bank transfers (can be configured)
+
+## Development
+
+### Project Structure
 ```
-POST   /api/payments/create-payment-intent    # Create Stripe payment
-POST   /api/payments/confirm-payment          # Confirm payment and create booking
-```
-
-### Admin Dashboard
-```
-GET    /api/admin/dashboard    # Dashboard statistics
-GET    /api/admin/analytics    # Detailed analytics
-GET    /api/admin/revenue-reports  # Revenue reporting
-GET    /api/admin/settings     # Get system settings
-PUT    /api/admin/settings     # Update system settings
-```
-
-### Special Offers
-```
-GET    /api/offers             # List active offers
-POST   /api/offers             # Create offer (admin)
-GET    /api/offers/:id         # Get offer details
-PUT    /api/offers/:id         # Update offer (admin)
-DELETE /api/offers/:id         # Delete offer (admin)
-```
-
-### Contact
-```
-GET    /api/contact            # List contact messages (admin)
-POST   /api/contact            # Submit contact form
-```
-
-## 👥 Admin User Management
-
-### Adding Admin Users
-
-To add additional admin users who will receive booking notifications:
-
-```bash
-# Using MongoDB shell or your admin interface
-db.users.insertOne({
-  name: "Admin Name",
-  email: "admin@example.com", 
-  password: "hashed_password", // Use bcrypt to hash
-  role: "ADMIN",
-  preferences: {
-    notifications: {
-      email: true,
-      sms: false
-    }
-  }
-});
-```
-
-### Admin Email Notifications
-
-All users with:
-- `role: "ADMIN"` 
-- `preferences.notifications.email: true`
-
-Will automatically receive:
-- New booking alerts
-- Low inventory warnings
-- System notifications
-
-## 🗄️ Database Models
-
-### Booking Model
-```javascript
-{
-  bookingNumber: String,          // Auto-generated (AST-2024-001)
-  roomId: ObjectId,               // Reference to Room
-  userId: ObjectId,               // Optional user reference
-  guestInfo: {
-    firstName: String,
-    lastName: String,
-    email: String,
-    phone: String,
-    specialRequests: String,
-    language: String              // Customer's language (el/en/de)
-  },
-  checkIn: Date,
-  checkOut: Date,
-  adults: Number,
-  children: Number,
-  totalAmount: Number,
-  paymentMethod: String,          // CARD or CASH
-  paymentStatus: String,          // PENDING, PAID, FAILED, REFUNDED
-  bookingStatus: String,          // CONFIRMED, PENDING, CANCELLED, etc.
-  stripePaymentIntentId: String,  // Stripe reference
-  notes: String,
-  reminderSent: Boolean,          // Arrival reminder flag
-  createdAt: Date,
-  updatedAt: Date
-}
+backend/
+├── src/
+│   ├── controllers/     # Route handlers
+│   ├── middleware/      # Authentication & validation
+│   ├── models/         # Database schemas
+│   ├── routes/         # API route definitions
+│   ├── services/       # Business logic
+│   ├── utils/          # Helper functions
+│   └── app.js          # Express app setup
+├── .env                 # Environment variables
+├── package.json         # Dependencies
+└── README.md           # This file
 ```
 
-### Settings Model
-```javascript
-{
-  // Booking Rules
-  checkInTime: String,            // Default: "15:00"
-  checkOutTime: String,           // Default: "11:00"
-  minAdvanceBooking: Number,      // Days: 1-365
-  maxAdvanceBooking: Number,      // Days: 1-365
-  cancellationPolicy: Number,     // Hours before free cancellation
-  overbookingAllowed: Boolean,    // Allow overBooking
+### Adding New Features
+1. Create the model in `src/models/`
+2. Add routes in `src/routes/`
+3. Implement controllers in `src/controllers/`
+4. Add validation middleware if needed
+5. Update this README
 
-  // Pricing & Payments
-  currency: String,               // EUR (fixed for Greece)
-  taxRate: Number,                // Default: 13% (Greek VAT)
-  automaticPricing: Boolean,      // Dynamic pricing toggle
-  directBookingDiscount: Number,  // Percentage discount
-
-  // Notifications
-  emailNotifications: Boolean,
-  bookingConfirmations: Boolean,
-  reminderNotifications: Boolean,
-  reminderHours: Number,          // Hours before check-in
-  lowInventoryAlerts: Boolean,
-  newBookingAlerts: Boolean,
-
-  // System Preferences
-  itemsPerPage: Number,           // Admin pagination
-  maintenanceMode: Boolean,       // Disable new bookings
-
-  // Security
-  sessionTimeout: Number,         // Minutes
-  requireTwoFA: Boolean,
-  auditLogging: Boolean,
-  maxConcurrentSessions: Number
-}
-```
-
-## 🔒 Security Features
-
-### Authentication & Authorization
-- **JWT Tokens**: Secure session management
-- **Role-based Access**: Admin/user permissions
-- **Session Management**: Configurable timeouts
-- **API Key Protection**: Optional API key middleware
-
-### Input Validation
-- **express-validator**: All input sanitization
-- **Mongoose Validation**: Database-level constraints
-- **Type Checking**: Parameter validation
-- **SQL Injection Prevention**: NoSQL injection protection
-
-### Payment Security
-- **Stripe Integration**: PCI-compliant processing
-- **Payment Intent Flow**: Secure 3D authentication
-- **Server-side Validation**: Amount verification
-- **Idempotency**: Duplicate payment prevention
-
-## 📈 Analytics & Reporting
-
-### Dashboard Metrics
-- **Live Statistics**: Real-time booking counts, revenue
-- **Occupancy Rates**: Current and historical
-- **Revenue Tracking**: Daily, weekly, monthly totals
-- **Guest Analytics**: Demographics and patterns
-
-### Revenue Reports
-- **Period Analysis**: Custom date range reporting
-- **Room Performance**: Individual room statistics
-- **Payment Analysis**: Payment method breakdown
-- **Trend Analysis**: Growth and seasonal patterns
-
-## 🚀 Deployment
-
-### Production Checklist
-
-1. **Environment Variables**
-   ```bash
-NODE_ENV=production
-   MONGODB_URI=mongodb+srv://... (Atlas production cluster)
-   JWT_SECRET=... (strong production secret)
-   STRIPE_SECRET_KEY=sk_live_... (live keys)
-   EMAIL_USER=... (business email)
-   ```
-
-2. **Database Setup**
-   - MongoDB Atlas production cluster
-   - Database user with appropriate permissions
-   - Network access configuration
-   - Backup strategy
-
-3. **Email Configuration**
-   - Business Gmail account
-   - App password generated
-   - Email templates tested
-
-4. **Security**
-   - CORS configuration for production domains
-   - Rate limiting enabled
-   - Input validation active
-   - SSL/TLS encryption
-
-### Deployment Platforms
-
-#### Render (Recommended)
-```bash
-# Build command
-npm install
-
-# Start command  
-npm start
-
-# Environment variables set in dashboard
-```
-
-#### Railway
-```bash
-# Automatic deployment from GitHub
-# Environment variables in project settings
-```
-
-#### Heroku
-```bash
-# Procfile
-web: node src/index.js
-
-# Config vars set in dashboard
-```
-
-## 🧪 Testing
-
-### Connectivity Tests
-```bash
-# Test backend server
-node test-backend.js
-
-# Test MongoDB connection
-node test-mongodb.js
-
-# Test email system
-node -e "require('./src/services/emailService').sendTestEmail('bookingConfirmation', 'en')"
-```
-
-### API Testing
-```bash
-# Install HTTPie or use curl
-http GET localhost:3001/api/rooms
-http POST localhost:3001/api/auth/login email=admin@asterias.gr password=admin123
-```
-
-### Load Testing
-```bash
-# Use artillery or similar
-npm install -g artillery
-artillery quick --count 10 --num 5 http://localhost:3001/api/rooms
-```
-
-## 📝 Scripts
-
-```bash
-# Development
-pnpm dev              # Start with nodemon
-
-# Production
-pnpm start            # Start server
-
-# Database
-node create-admin.js  # Create admin user
-node check-bookings.js # Validate bookings
-
-# Testing
-node test-backend.js  # Test server
-node test-mongodb.js  # Test database
-node test-admin-emails.js # Test multi-admin email system
-```
-
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
-#### Database Connection
-```bash
-# Check MongoDB URI format
-mongodb+srv://username:password@cluster.mongodb.net/database?retryWrites=true&w=majority
-
-# Test connection
-node test-mongodb.js
-```
+#### Database Connection Failed
+- Check MongoDB URI in `.env`
+- Ensure MongoDB service is running
+- Verify network connectivity for Atlas
 
 #### Email Not Sending
-```bash
-# Verify Gmail settings
-# Check app password (not regular password)
-# Ensure 2FA is enabled
-# Test with simple script
-```
+- Check Gmail credentials
+- Verify 2FA is properly configured
+- Check app password generation
 
 #### Payment Issues
-```bash
-# Verify Stripe keys
-# Check webhook endpoints
-# Test with Stripe CLI
-stripe listen --forward-to localhost:3001/api/webhooks/stripe
+- Verify Stripe API keys
+- Check webhook configuration
+- Test with Stripe test cards
+
+#### Authentication Errors
+- Verify JWT_SECRET is set
+- Check token expiration
+- Ensure proper middleware order
+
+### Debug Mode
+Enable debug logging by setting:
+```env
+DEBUG=app:*
+NODE_ENV=development
 ```
 
-## 📞 Support
+## Deployment
 
-### Contact Information
-- **Email**: asterias.apartmentskoronisia@gmail.com
-- **Location**: Koronisia, Arta 48100, Greece
-- **Technical Support**: GitHub Issues
+### Environment Variables
+Ensure all required environment variables are set in your production environment.
 
-### Documentation
-- [Stripe API Documentation](https://stripe.com/docs/api)
-- [MongoDB Documentation](https://docs.mongodb.com/)
-- [Express.js Documentation](https://expressjs.com/)
-- [Nodemailer Documentation](https://nodemailer.com/)
+### Database
+- Use MongoDB Atlas for production
+- Set up proper network access rules
+- Configure backup schedules
+
+### Security
+- Use strong JWT secrets
+- Enable HTTPS
+- Configure CORS properly
+- Set up rate limiting
+
+## Monitoring
+
+### Logs
+The application logs important events to console. In production, consider:
+- Winston for structured logging
+- Log aggregation services
+- Error tracking (Sentry, etc.)
+
+### Health Checks
+- `/api/health` - Basic health check endpoint
+- Database connectivity monitoring
+- External service status
+
+## Contact
+
+For technical support or questions about this backend:
+- **Company**: Adinfinity
+- **Email**: adenfinity@gmail.com
+
+## Development Team
+
+This backend is maintained by the Adinfinity development team.
 
 ---
 
-**Asterias Homes Backend** - Powering traditional Greek hospitality with modern technology. 
+**Note**: This backend is designed to work with the Asterias Homes frontend application. Ensure both services are properly configured and running for full functionality. 
