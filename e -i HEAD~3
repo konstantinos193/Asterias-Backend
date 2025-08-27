@@ -1,0 +1,67 @@
+[33m9b3fd5a[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Remove env.example from tracking and add to gitignore
+[33m330f422[m samalakaasdf
+[33mb3f17fb[m samalakaasdf
+[33m633c85c[m[33m ([m[1;31morigin/main[m[33m)[m samalakaasdf
+[33md0d8778[m samalakaasdf
+[33me29b646[m samalakaasdf
+[33m088a72e[m samalakaasdf
+[33mdc80536[m cleanup: remove junk test files and unnecessary dependencies
+[33mee24ecb[m refactor: consolidate email services and prioritize app passwords
+[33m01aaa47[m Fix nodemailer function name typo - createTransporter to createTransport
+[33m5216f56[m Fix MongoDB duplicate key error with robust index cleanup and emergency collection recreation
+[33ma2d494e[m whamimdoing with my life
+[33m3274c20[m Configure email service to actually send emails with proper SMTP setup and contact information
+[33m4415485[m Update email service with real contact info and add receipt functionality - Replace placeholder contact info with real phone (+30 6972705881) and email (asterias.apartmentskoronisia@gmail.com) - Add comprehensive receipt section to booking confirmation emails - Include payment method, transaction ID for Stripe payments, and tax information - Calculate nights automatically from check-in/check-out dates - Support both card and cash payment methods in email templates
+[33m608d516[m Fix translation issues and add email confirmation functionality - Add missing adultsLabel and childrenLabel translation keys to all languages - Integrate email confirmation service for both Stripe and cash bookings - Send confirmation emails automatically when bookings are created - Improve user experience with proper guest labels and email receipts
+[33m2339812[m Fix StrictPopulateError by removing populate('room') calls - Remove problematic populate calls that were causing errors after successful booking creation - Booking objects already contain all necessary information without population - Resolves the final issue preventing payment confirmation from completing
+[33m27f446c[m Fix bookingNumber generation by handling it manually in payment routes - Remove problematic pre-save middleware that was failing silently - Generate booking numbers directly in confirm-payment and create-cash-booking routes - Ensure bookingNumber is set before validation occurs to prevent required field errors
+[33md26d93f[m Fix bookingNumber generation in pre-save middleware - Use regex query to find last booking number instead of relying on createdAt - Ensure bookingNumber is always generated before validation occurs
+[33m0ada94f[m Fix payment flow and add cash booking support - Add debugging to pre-save middleware for bookingNumber generation - Create separate /create-cash-booking endpoint for cash payments - Fix cash payment flow in frontend integration - Improve error handling and validation for payment processing
+[33m5f9a7d4[m Fix booking creation: move specialRequests to guestInfo and improve bookingNumber generation
+[33m684a49c[m Fix detectLanguage import error in payments and bookings routes
+[33m9d36fac[m Fix payment error: Update method calls from checkAvailability to isApartmentAvailable in payments.js and rooms.js routes. This resolves the 500 Internal Server Error when creating payment intents.
+[33mb7b9f22[m Fix: Calendar now properly shows availability for 7 identical standard rooms based on actual bookings
+[33m9cf02c6[m Fix: Add calendar aggregation to show availability across all rooms instead of single room
+[33m5b90b92[m Fix: Add missing availability routes to fix 404 error for calendar endpoints
+[33m394335b[m Add availability routes and utils, update backend functionality
+[33m4f187c9[m fix: Resolve merge conflicts and standardize to 7 Standard Apartments
+[33m67679ef[m feat: Update seed script to create 7 identical Standard Apartments
+[33m519dabb[m bruh
+[33mc00e5a9[m bruh
+[33mddeb082[m bruh
+[33m92e56aa[m bruh
+[33mf6444e5[m bruh
+[33mf0c53bd[m bruh
+[33mccedb94[m bruh
+[33m1e8939e[m bruh
+[33m2d8a31d[m bruh
+[33mfbc441e[m bruh
+[33m310055b[m bruh
+[33mb738cf7[m bruh
+[33mf6e43de[m bruh
+[33m4019682[m bruh
+[33m627070e[m bruh
+[33m8777ee6[m bruh
+[33m63bf023[m bruh
+[33m16dcf7d[m bruh
+[33mf58dceb[m bruh
+[33ma34da1a[m bruh
+[33m3389037[m Asdfasdf
+[33m723e9c2[m bruh
+[33me49150a[m Remove submodule config from .gitmodules
+[33m457704b[m Clean backend repo, remove nested repo
+[33m8b83b98[m Initial commit or your message
+[33m9753180[m samalamadooma
+[33m3541155[m samalamadooma
+[33m1ba4207[m samalamadooma
+[33md91ce0d[m samalamadooma
+[33mb3dfe47[m samalamadooma
+[33mc8b0738[m samalamadooma
+[33m368755a[m samalamadooma
+[33m6fc8fb2[m samalamadooma
+[33m580196b[m samalamadooma
+[33m0d6e900[m samalamadooma
+[33m326a062[m samalamadooma
+[33mec47423[m samalamadooma
+[33md459141[m Initial commit: Asterias Homes Backend API
+[33md769f41[m Initial commit: Asterias Homes Backend API
