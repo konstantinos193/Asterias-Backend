@@ -199,7 +199,8 @@ router.post('/confirm-payment', [
     
     await booking.save();
     console.log('Booking saved successfully, bookingNumber:', booking.bookingNumber);
-    await booking.populate('room');
+    // Note: Removed populate('room') to avoid StrictPopulateError
+    // The booking object already contains all necessary information
 
     res.status(201).json({
       message: 'Payment confirmed and booking created successfully',
@@ -309,7 +310,8 @@ router.post('/create-cash-booking', [
     
     await booking.save();
     console.log('Cash booking saved successfully, bookingNumber:', booking.bookingNumber);
-    await booking.populate('room');
+    // Note: Removed populate('room') to avoid StrictPopulateError
+    // The booking object already contains all necessary information
 
     res.status(201).json({
       message: 'Cash booking created successfully',
