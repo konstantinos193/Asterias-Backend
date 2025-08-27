@@ -2,7 +2,9 @@ const express = require('express');
 const { body, query, validationResult } = require('express-validator');
 const Room = require('../models/Room');
 const Booking = require('../models/Booking');
-const { authenticateToken, requireAdmin, optionalAuth } = require('../middleware/auth');
+const { authenticateToken, requireAdmin, optionalAuth, requireApiKeyOrAdmin } = require('../middleware/auth');
+const multer = require('multer');
+const path = require('path');
 
 const router = express.Router();
 
@@ -186,8 +188,8 @@ router.put('/:id', authenticateToken, requireAdmin, [
   }
 });
 
-// Delete room (admin only)
-router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
+// Delete room (admin only) - accept either API key or admin auth
+router.delete('/:id', requireApiKeyOrAdmin, async (req, res) => {
   try {
     // Check if room has any bookings
     const hasBookings = await Booking.exists({ roomId: req.params.id });
@@ -210,8 +212,8 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Upload room images (admin only)
-router.post('/:id/images', authenticateToken, requireAdmin, async (req, res) => {
+// Upload room images (admin only) - accept either API key or admin auth
+router.post('/:id/images', requireApiKeyOrAdmin, async (req, res) => {
   try {
     const { images } = req.body;
     
@@ -239,8 +241,8 @@ router.post('/:id/images', authenticateToken, requireAdmin, async (req, res) => 
   }
 });
 
-// Get room statistics (admin only)
-router.get('/stats/overview', authenticateToken, requireAdmin, async (req, res) => {
+// Get room statistics (admin only) - accept either API key or admin auth
+router.get('/stats/overview', requireApiKeyOrAdmin, async (req, res) => {
   try {
     const totalRooms = await Room.countDocuments();
     const availableRooms = await Room.countDocuments({ available: true });

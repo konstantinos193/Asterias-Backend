@@ -79,6 +79,8 @@ router.post('/login', [
         email: 'admin@asterias.com',
         role: 'ADMIN',
         isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         getPublicProfile: function() {
           return {
             _id: this._id,
@@ -86,7 +88,9 @@ router.post('/login', [
             username: this.username,
             email: this.email,
             role: this.role,
-            isActive: this.isActive
+            isActive: this.isActive,
+            createdAt: this.createdAt,
+            updatedAt: this.updatedAt
           };
         }
       };
@@ -104,7 +108,7 @@ router.post('/login', [
         maxAge: 7 * 24 * 60 * 60 * 1000 // 1 week
       });
 
-      console.log('Login successful for admin user');
+      console.log('Login successful for admin user, token generated:', token.substring(0, 20) + '...');
 
       res.json({
         message: 'Login successful',
@@ -436,6 +440,38 @@ router.post('/debug/test-password', async (req, res) => {
   } catch (error) {
     console.error('Password test error:', error);
     res.status(500).json({ error: 'Failed to test password' });
+  }
+});
+
+// Test JWT token generation (for debugging)
+router.get('/test-jwt', async (req, res) => {
+  try {
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({ 
+        error: 'JWT_SECRET not configured',
+        hasJwtSecret: false,
+        envVars: Object.keys(process.env).filter(key => key.includes('JWT'))
+      });
+    }
+    
+    const testToken = generateToken('test-user-id');
+    const testRefreshToken = generateRefreshToken('test-user-id');
+    
+    res.json({
+      message: 'JWT test successful',
+      hasJwtSecret: true,
+      testToken: testToken.substring(0, 20) + '...',
+      testRefreshToken: testRefreshToken.substring(0, 20) + '...',
+      tokenLength: testToken.length,
+      refreshTokenLength: testRefreshToken.length
+    });
+  } catch (error) {
+    console.error('JWT test error:', error);
+    res.status(500).json({ 
+      error: 'JWT test failed',
+      message: error.message,
+      hasJwtSecret: !!process.env.JWT_SECRET
+    });
   }
 });
 

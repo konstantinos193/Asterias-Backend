@@ -22,6 +22,24 @@ const authenticateToken = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Handle hardcoded admin user
+    if (decoded.userId === 'admin-user-id') {
+      const adminUser = {
+        _id: 'admin-user-id',
+        name: 'Admin User',
+        username: 'admin',
+        email: 'admin@asterias.com',
+        role: 'ADMIN',
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      req.user = adminUser;
+      return next();
+    }
+    
+    // Regular user lookup from database
     const user = await User.findById(decoded.userId).select('-password');
 
     if (!user) {
@@ -49,6 +67,26 @@ const authenticateToken = async (req, res, next) => {
 const requireAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  if (req.user.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  next();
+};
+
+// Middleware to accept either API key OR admin authentication
+const requireApiKeyOrAdmin = (req, res, next) => {
+  // Check if API key is provided
+  const apiKey = req.headers['x-api-key'];
+  if (apiKey && apiKey === process.env.API_KEY) {
+    return next(); // API key is valid, proceed
+  }
+  
+  // If no API key, check admin authentication
+  if (!req.user) {
+    return res.status(401).json({ error: 'API key or authentication required' });
   }
 
   if (req.user.role !== 'ADMIN') {
@@ -119,6 +157,7 @@ const generateRefreshToken = (userId) => {
 module.exports = {
   authenticateToken,
   requireAdmin,
+  requireApiKeyOrAdmin,
   requireAdminOrOwner,
   optionalAuth,
   generateToken,

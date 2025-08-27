@@ -2,7 +2,7 @@ const express = require('express');
 const { body, query, validationResult } = require('express-validator');
 const Booking = require('../models/Booking');
 const Room = require('../models/Room');
-const { authenticateToken, requireAdmin, optionalAuth } = require('../middleware/auth');
+const { authenticateToken, requireAdmin, requireApiKeyOrAdmin, optionalAuth } = require('../middleware/auth');
 const bookingcomService = require('../services/bookingcom.service');
 const requireApiKey = require('../middleware/apiKey');
 const { sendBookingConfirmation, sendNewBookingAlert, sendEmailToAllAdmins, detectLanguage } = require('../services/emailService');
@@ -264,45 +264,41 @@ router.patch('/:id/status', authenticateToken, requireAdmin, [
   }
 });
 
-// Get all bookings (admin only)
-router.get('/', authenticateToken, requireAdmin, async (req, res) => {
+// Get all bookings (admin only) - accept either API key or admin auth
+router.get('/', requireApiKeyOrAdmin, async (req, res) => {
   try {
-    const {
-      status,
-      paymentStatus,
-      checkIn,
-      checkOut,
-      guestEmail,
-      page = 1,
-      limit = 20,
-      sortBy = 'createdAt',
-      sortOrder = 'desc'
-    } = req.query;
-
-    // Build filter
-    const filter = {};
-    if (status) filter.bookingStatus = status;
-    if (paymentStatus) filter.paymentStatus = paymentStatus;
-    if (checkIn) filter.checkIn = { $gte: new Date(checkIn) };
-    if (checkOut) filter.checkOut = { $lte: new Date(checkOut) };
-    if (guestEmail) filter['guestInfo.email'] = { $regex: guestEmail, $options: 'i' };
-
-    // Build sort
+    const { page = 1, limit = 50, status, search, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    
+    // Build query
+    const query = {};
+    if (status && status !== 'all') {
+      query.bookingStatus = status;
+    }
+    
+    if (search) {
+      query.$or = [
+        { 'guestInfo.firstName': { $regex: search, $options: 'i' } },
+        { 'guestInfo.lastName': { $regex: search, $options: 'i' } },
+        { 'guestInfo.email': { $regex: search, $options: 'i' } },
+        { bookingNumber: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Build sort object
     const sort = {};
     sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
-
-    // Pagination
+    
+    // Execute query with pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const bookings = await Booking.find(filter)
-      .populate('room')
-      .populate('user', 'name email')
+    const bookings = await Booking.find(query)
+      .populate('roomId', 'name type')
       .sort(sort)
       .skip(skip)
-      .limit(parseInt(limit));
-
-    const total = await Booking.countDocuments(filter);
-
+      .limit(parseInt(limit))
+      .lean();
+    
+    const total = await Booking.countDocuments(query);
+    
     res.json({
       bookings,
       pagination: {
