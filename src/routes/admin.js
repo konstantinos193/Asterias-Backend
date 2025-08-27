@@ -524,8 +524,8 @@ router.get('/dashboard', async (req, res) => {
 
     // Recent bookings
     const recentBookings = await Booking.find()
-      .populate('room', 'name')
-      .populate('user', 'name email')
+      .populate('roomId', 'name')
+      .populate('userId', 'name email')
       .sort({ createdAt: -1 })
       .limit(5);
 
@@ -613,8 +613,8 @@ router.get('/bookings', async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const bookings = await Booking.find(filter)
-      .populate('room', 'name')
-      .populate('user', 'name email')
+      .populate('roomId', 'name')
+      .populate('userId', 'name email')
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
