@@ -427,8 +427,8 @@ router.get('/dashboard', async (req, res) => {
     const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
     const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
 
-    // Today's arrivals
-    const todayArrivals = await Booking.countDocuments({
+    // Today's arrivals count
+    const todayArrivalsCount = await Booking.countDocuments({
       checkIn: { $gte: startOfDay, $lt: endOfDay },
       bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
     });
@@ -520,7 +520,7 @@ router.get('/dashboard', async (req, res) => {
     const todayGuestsCount = todayGuests[0]?.total || 0;
     const yesterdayGuestsCount = yesterdayGuests[0]?.total || 0;
 
-    const arrivalsChange = calculateChange(todayArrivals, yesterdayArrivals);
+    const arrivalsChange = calculateChange(todayArrivalsCount, yesterdayArrivals);
     const guestsChange = calculateChange(todayGuestsCount, yesterdayGuestsCount);
     const occupancyChange = calculateChange(occupancyRate, yesterdayOccupancyRate);
     
@@ -536,6 +536,16 @@ router.get('/dashboard', async (req, res) => {
       .populate('userId', 'name email')
       .sort({ createdAt: -1 })
       .limit(5);
+
+    // Today's arrivals (bookings with check-in today)
+    const todayArrivals = await Booking.find({
+      checkIn: { $gte: startOfDay, $lt: endOfDay },
+      bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
+    })
+      .populate('roomId', 'name')
+      .populate('userId', 'name email')
+      .sort({ checkIn: 1 })
+      .limit(10);
 
     // Monthly revenue
     const monthlyRevenue = await Booking.aggregate([
@@ -559,7 +569,7 @@ router.get('/dashboard', async (req, res) => {
     res.json({
       stats: {
         todayArrivals: {
-          value: todayArrivals,
+          value: todayArrivalsCount,
           change: arrivalsChange.change,
           changeType: arrivalsChange.changeType
         },
@@ -580,6 +590,7 @@ router.get('/dashboard', async (req, res) => {
         }
       },
       recentBookings,
+      todayArrivals,
       monthlyRevenue: monthlyRevenue[0]?.total || 0,
       unreadContacts
     });
