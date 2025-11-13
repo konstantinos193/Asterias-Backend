@@ -935,6 +935,23 @@ router.get('/rooms', async (req, res) => {
   }
 });
 
+// Get single room by ID (admin)
+router.get('/rooms/:id', async (req, res) => {
+  try {
+    const Room = require('../models/Room');
+    const room = await Room.findById(req.params.id);
+    
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    res.json({ room });
+  } catch (error) {
+    console.error('Get room error:', error);
+    res.status(500).json({ error: 'Failed to get room' });
+  }
+});
+
 // Create new room - no auth required for now
 router.post('/rooms', [
   body('name').trim().isLength({ min: 2 }).withMessage('Room name must be at least 2 characters'),
@@ -950,7 +967,10 @@ router.post('/rooms', [
     }
 
     const Room = require('../models/Room');
-    let roomData = { ...req.body };
+    const { normalizeRoomUpdateData } = require('../utils/roomDataNormalizer');
+    
+    // Normalize the room data to ensure amenities are properly formatted
+    let roomData = normalizeRoomUpdateData(req.body);
 
     // Generate translation keys if not provided (for backward compatibility)
     if (!roomData.nameKey) {
@@ -996,7 +1016,10 @@ router.put('/rooms/:id', authenticateToken, requireAdmin, [
     }
 
     const Room = require('../models/Room');
-    const updates = req.body;
+    const { normalizeRoomUpdateData } = require('../utils/roomDataNormalizer');
+    
+    // Normalize the update data to ensure amenities are properly formatted
+    const updates = normalizeRoomUpdateData(req.body);
 
     const room = await Room.findByIdAndUpdate(
       req.params.id,

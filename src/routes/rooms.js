@@ -141,7 +141,11 @@ router.post('/', authenticateToken, requireAdmin, [
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const room = new Room(req.body);
+    const { normalizeRoomUpdateData } = require('../utils/roomDataNormalizer');
+    
+    // Normalize the room data to ensure amenities are properly formatted
+    const roomData = normalizeRoomUpdateData(req.body);
+    const room = new Room(roomData);
     await room.save();
 
     res.status(201).json({
@@ -168,9 +172,14 @@ router.put('/:id', authenticateToken, requireAdmin, [
       return res.status(400).json({ errors: errors.array() });
     }
 
+    const { normalizeRoomUpdateData } = require('../utils/roomDataNormalizer');
+    
+    // Normalize the update data to ensure amenities are properly formatted
+    const updates = normalizeRoomUpdateData(req.body);
+
     const room = await Room.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updates,
       { new: true, runValidators: true }
     );
 
