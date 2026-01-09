@@ -1075,8 +1075,8 @@ router.delete('/rooms/:id', authenticateToken, requireAdmin, async (req, res) =>
   }
 });
 
-// Get all users - no auth required for now
-router.get('/users', async (req, res) => {
+// Get all users (admin only)
+router.get('/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20, role, search } = req.query;
     
