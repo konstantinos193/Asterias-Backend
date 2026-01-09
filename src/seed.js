@@ -53,13 +53,13 @@ const standardApartmentData = {
     safe: true
   },
   totalRooms: 1,
-  image: 'https://i.imgur.com/SaAHqbC.jpeg',
+  image: '/room-featured-1.jpeg',
   images: [
-    'https://i.imgur.com/SaAHqbC.jpeg',
-    'https://i.imgur.com/VjuPC23.png',
-    'https://i.imgur.com/2JTTkSc.png',
-    'https://i.imgur.com/r1uVnhU.png',
-    'https://i.imgur.com/X7AG1TW.png'
+    '/room-featured-1.jpeg',
+    '/room-featured-2.png',
+    '/room-featured-3.png',
+    '/room-featured-4.png',
+    '/room-featured-5.png'
   ],
   rating: 4.8,
   reviewCount: 25

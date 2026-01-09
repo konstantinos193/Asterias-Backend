@@ -295,7 +295,7 @@ function getBaseTemplate(content, language = 'el') {
       <div class="email-container">
         <div class="header">
           <div class="logo-container">
-            <img src="https://i.imgur.com/leL7gRY.png" alt="Asterias Homes Logo" class="logo">
+            <img src="https://asteriashome.gr/email-logo.png" alt="Asterias Homes Logo" class="logo">
           </div>
         </div>
         

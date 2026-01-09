@@ -26,7 +26,10 @@ const { checkMaintenanceMode, attachSettings } = require('./middleware/settings'
 
 // Email and scheduled tasks
 const { initializeEmailTransporter } = require('./services/emailService');
-const { startScheduledTasks } = require('./services/scheduledTasks');
+const { startScheduledTasks, stopScheduledTasks } = require('./services/scheduledTasks');
+
+// Memory monitoring
+const memoryMonitor = require('./utils/memory-monitor');
 
 // Middleware
 app.use(helmet());
@@ -100,7 +103,7 @@ app.use((err, req, res, next) => {
 });
 
 // 404 handler
-app.use('*', (req, res) => {
+app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
@@ -150,6 +153,13 @@ const startServer = async () => {
     initializeEmailTransporter();
     console.log('📧 Email service initialized');
     
+    // Start memory monitoring if enabled
+    if (process.env.NODE_ENABLE_MEMORY_MONITOR === 'true' || process.env.NODE_ENV === 'development') {
+      const thresholdMB = parseInt(process.env.MEMORY_WARNING_THRESHOLD) || 500;
+      const checkIntervalMs = parseInt(process.env.MEMORY_CHECK_INTERVAL) || 60000;
+      memoryMonitor.start(thresholdMB, checkIntervalMs);
+    }
+    
     // Start scheduled notification tasks
     startScheduledTasks();
     
@@ -165,28 +175,37 @@ const startServer = async () => {
 };
 
 // Handle graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully');
+const gracefulShutdown = async (signal) => {
+  console.log(`${signal} received, shutting down gracefully`);
   try {
+    // Stop memory monitoring
+    memoryMonitor.stop();
+    
+    // Stop scheduled tasks first to prevent new operations
+    stopScheduledTasks();
+    
+    // Close database connection
     await mongoose.connection.close();
     console.log('MongoDB connection closed');
+    
     process.exit(0);
   } catch (error) {
-    console.error('Error closing MongoDB connection:', error);
+    console.error('Error during shutdown:', error);
     process.exit(1);
   }
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught errors
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, shutting down gracefully');
-  try {
-    await mongoose.connection.close();
-    console.log('MongoDB connection closed');
-    process.exit(0);
-  } catch (error) {
-    console.error('Error closing MongoDB connection:', error);
-    process.exit(1);
-  }
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  gracefulShutdown('uncaughtException');
 });
 
 // Start the server

@@ -72,7 +72,7 @@ const userSchema = new mongoose.Schema({
 
 // Index for better query performance
 userSchema.index({ role: 1 });
-userSchema.index({ username: 1 });
+// Note: username index is automatically created by unique: true on the field
 
 // Hash password before saving
 userSchema.pre('save', async function(next) {

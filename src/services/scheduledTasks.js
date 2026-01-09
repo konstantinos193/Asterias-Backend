@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const jobManager = require('./job-manager');
 const { sendArrivalReminder, checkLowInventory, sendEmailToAllAdmins } = require('./emailService');
 const { getSettings } = require('../middleware/settings');
 const Booking = require('../models/Booking');
@@ -123,30 +124,30 @@ async function cleanupNotificationFlags() {
   }
 }
 
-// Initialize scheduled tasks
+// Initialize scheduled tasks using JobManager
 function startScheduledTasks() {
   console.log('🚀 Starting scheduled notification tasks...');
 
   // Check for arrival reminders every hour
-  cron.schedule('0 * * * *', async () => {
+  jobManager.scheduleCron('arrival-reminders', '0 * * * *', async () => {
     console.log('⏰ Running hourly reminder check...');
     await checkArrivalReminders();
   });
 
   // Check inventory levels twice daily (9 AM and 6 PM)
-  cron.schedule('0 9,18 * * *', async () => {
+  jobManager.scheduleCron('inventory-checks', '0 9,18 * * *', async () => {
     console.log('⏰ Running inventory check...');
     await checkUpcomingInventory();
   });
 
   // Clean up old flags daily at midnight
-  cron.schedule('0 0 * * *', async () => {
+  jobManager.scheduleCron('cleanup-flags', '0 0 * * *', async () => {
     console.log('⏰ Running daily cleanup...');
     await cleanupNotificationFlags();
   });
 
   // Initial check on startup (with delay to let server fully start)
-  setTimeout(async () => {
+  jobManager.scheduleTimeout('initial-checks', async () => {
     console.log('🔄 Running initial notification checks...');
     await checkArrivalReminders();
     await checkUpcomingInventory();
@@ -156,6 +157,16 @@ function startScheduledTasks() {
   console.log('  - Arrival reminders: Every hour');
   console.log('  - Inventory checks: 9 AM & 6 PM daily');
   console.log('  - Cleanup: Midnight daily');
+  
+  // Log job statistics
+  jobManager.listJobs();
+}
+
+// Stop all scheduled tasks and clean up
+function stopScheduledTasks() {
+  console.log('🛑 Stopping scheduled tasks...');
+  jobManager.stopAll();
+  console.log('✅ All scheduled tasks stopped');
 }
 
 // Manual trigger functions (useful for testing)
@@ -171,6 +182,7 @@ async function triggerInventoryCheck() {
 
 module.exports = {
   startScheduledTasks,
+  stopScheduledTasks,
   checkArrivalReminders,
   checkUpcomingInventory,
   cleanupNotificationFlags,
