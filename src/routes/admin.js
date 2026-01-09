@@ -1661,4 +1661,134 @@ router.delete('/guests/:email', async (req, res) => {
   }
 });
 
+// ========================================
+// OFFERS ROUTES (Admin)
+// ========================================
+
+// Get all offers (admin only) - matches frontend expectation of /api/admin/offers
+router.get('/offers', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const Offer = require('../models/Offer');
+    const { page = 1, limit = 100, active } = req.query;
+    
+    const filter = {};
+    if (active !== undefined) filter.active = active === 'true';
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const offers = await Offer.find(filter)
+      .populate('applicableRooms')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await Offer.countDocuments(filter);
+
+    res.json({
+      offers,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('Get all offers (admin) error:', error);
+    res.status(500).json({ error: 'Failed to get offers' });
+  }
+});
+
+// Update offer (admin only) - matches frontend expectation of PUT /api/admin/offers/:id
+router.put('/offers/:id', authenticateToken, requireAdmin, [
+  body('title').optional().trim().notEmpty().withMessage('Offer title cannot be empty'),
+  body('description').optional().trim().notEmpty().withMessage('Description cannot be empty'),
+  body('discount').optional().isFloat({ min: 0, max: 100 }).withMessage('Valid discount percentage is required'),
+  body('startDate').optional().isISO8601().withMessage('Valid start date is required'),
+  body('endDate').optional().isISO8601().withMessage('Valid end date is required'),
+  body('applicableRooms').optional().isArray().withMessage('Applicable rooms must be an array'),
+  body('active').optional().isBoolean().withMessage('Active must be a boolean')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const Offer = require('../models/Offer');
+    const {
+      title,
+      description,
+      discount,
+      startDate,
+      endDate,
+      applicableRooms,
+      active
+    } = req.body;
+
+    // Check if end date is after start date (if both are provided)
+    if (startDate && endDate && new Date(endDate) <= new Date(startDate)) {
+      return res.status(400).json({ error: 'End date must be after start date' });
+    }
+
+    const offer = await Offer.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true, runValidators: true }
+    ).populate('applicableRooms');
+
+    if (!offer) {
+      return res.status(404).json({ error: 'Offer not found' });
+    }
+
+    res.json({
+      message: 'Offer updated successfully',
+      offer
+    });
+  } catch (error) {
+    console.error('Update offer (admin) error:', error);
+    res.status(500).json({ error: 'Failed to update offer' });
+  }
+});
+
+// Delete offer (admin only) - matches frontend expectation of DELETE /api/admin/offers/:id
+router.delete('/offers/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const Offer = require('../models/Offer');
+    const offer = await Offer.findByIdAndDelete(req.params.id);
+    
+    if (!offer) {
+      return res.status(404).json({ error: 'Offer not found' });
+    }
+
+    res.json({ message: 'Offer deleted successfully' });
+  } catch (error) {
+    console.error('Delete offer (admin) error:', error);
+    res.status(500).json({ error: 'Failed to delete offer' });
+  }
+});
+
+// Toggle offer active status (admin only) - matches frontend expectation of PUT /api/admin/offers/:id/toggle
+router.put('/offers/:id/toggle', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const Offer = require('../models/Offer');
+    const offer = await Offer.findById(req.params.id);
+    
+    if (!offer) {
+      return res.status(404).json({ error: 'Offer not found' });
+    }
+
+    offer.active = !offer.active;
+    await offer.save();
+
+    res.json({
+      message: `Offer ${offer.active ? 'activated' : 'deactivated'} successfully`,
+      offer
+    });
+  } catch (error) {
+    console.error('Toggle offer (admin) error:', error);
+    res.status(500).json({ error: 'Failed to toggle offer status' });
+  }
+});
+
 module.exports = router; 
