@@ -9,9 +9,17 @@ const { detectLanguage, sendBookingConfirmationEmail } = require('../services/em
 const router = express.Router();
 
 // Initialize Stripe
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: '2024-11-20.acacia'
-});
+if (!process.env.STRIPE_SECRET_KEY) {
+  console.error('⚠️  WARNING: STRIPE_SECRET_KEY is not set in environment variables');
+  console.error('⚠️  Payment functionality will not work without a valid Stripe API key');
+  console.error('⚠️  Please add STRIPE_SECRET_KEY to your .env file');
+}
+
+const stripe = process.env.STRIPE_SECRET_KEY 
+  ? new Stripe(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: '2024-11-20.acacia'
+    })
+  : null;
 
 // Create payment intent
 router.post('/create-payment-intent', [
@@ -24,6 +32,10 @@ router.post('/create-payment-intent', [
   body('offerId').optional().isMongoId().withMessage('Valid offer ID is required')
 ], async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(500).json({ error: 'Stripe is not configured. Please set STRIPE_SECRET_KEY in your environment variables.' });
+    }
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
@@ -140,6 +152,10 @@ router.post('/confirm-payment', [
   body('specialRequests').optional().trim()
 ], optionalAuth, async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(500).json({ error: 'Stripe is not configured. Please set STRIPE_SECRET_KEY in your environment variables.' });
+    }
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
@@ -393,6 +409,10 @@ router.post('/create-cash-booking', [
 // Get payment status
 router.get('/status/:paymentIntentId', async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(500).json({ error: 'Stripe is not configured. Please set STRIPE_SECRET_KEY in your environment variables.' });
+    }
+
     const { paymentIntentId } = req.params;
 
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
@@ -411,6 +431,10 @@ router.get('/status/:paymentIntentId', async (req, res) => {
 // Refund payment (admin only)
 router.post('/refund/:bookingId', authenticateToken, async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(500).json({ error: 'Stripe is not configured. Please set STRIPE_SECRET_KEY in your environment variables.' });
+    }
+
     const booking = await Booking.findById(req.params.bookingId);
     
     if (!booking) {
@@ -453,6 +477,10 @@ router.post('/refund/:bookingId', authenticateToken, async (req, res) => {
 
 // Webhook for Stripe events
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  if (!stripe) {
+    return res.status(500).json({ error: 'Stripe is not configured. Please set STRIPE_SECRET_KEY in your environment variables.' });
+  }
+
   const sig = req.headers['stripe-signature'];
   const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 

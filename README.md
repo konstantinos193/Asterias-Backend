@@ -3,9 +3,9 @@
 ![Express.js](https://img.shields.io/badge/Express.js-5.2.1-000000?style=for-the-badge&logo=express)
 ![MongoDB](https://img.shields.io/badge/MongoDB-5.0+-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=node.js&logoColor=white)
-![Mongoose](https://img.shields.io/badge/Mongoose-9.1.2-880000?style=for-the-badge&logo=mongoose)
+![Mongoose](https://img.shields.io/badge/Mongoose-9.1.5-880000?style=for-the-badge&logo=mongoose)
 ![JWT](https://img.shields.io/badge/JWT-9.0.3-000000?style=for-the-badge&logo=jsonwebtokens)
-![Stripe](https://img.shields.io/badge/Stripe-20.1.2-635BFF?style=for-the-badge&logo=stripe&logoColor=white)
+![Stripe](https://img.shields.io/badge/Stripe-20.3.0-635BFF?style=for-the-badge&logo=stripe&logoColor=white)
 
 ## Overview
 
@@ -17,15 +17,15 @@ Built with love, caffeine, and questionable architectural decisions that somehow
 
 - **Runtime**: Node.js 18+ (because Node 16 is dead and buried)
 - **Framework**: Express.js 5.2.1 (we like living on the edge)
-- **Database**: MongoDB with Mongoose 9.1.2 ODM
+- **Database**: MongoDB with Mongoose 9.1.5 ODM
 - **Authentication**: JWT 9.0.3 (JSON Web Tokens - because passwords are for peasants)
-- **Payment**: Stripe 20.1.2 API integration
-- **Email**: Nodemailer 7.0.12 with Gmail SMTP (because every hotel needs spam)
+- **Payment**: Stripe 20.3.0 API integration
+- **Email**: Nodemailer 7.0.13 with Gmail SMTP (because every hotel needs spam)
 - **Validation**: Express-validator 7.3.1 (trust no one, validate everything)
-- **Security**: Helmet 8.1.0, CORS 2.8.5, Express-rate-limit 8.2.1
+- **Security**: Helmet 8.1.0, CORS 2.8.6, Express-rate-limit 8.2.1
 - **File Upload**: Multer 2.0.2 (for those room pictures that never load correctly)
 - **Scheduling**: Node-cron 4.2.1 (automated tasks that run when you're not looking)
-- **Image Storage**: Cloudinary 2.8.0 (because hosting images yourself is 2010)
+- **Image Storage**: Cloudinary 2.9.0 (because hosting images yourself is 2010)
 - **XML**: xml2js 0.6.2, xmlbuilder 15.1.1 (for when JSON isn't painful enough)
 
 ## Requirements
