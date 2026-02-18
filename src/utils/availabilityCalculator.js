@@ -1,5 +1,5 @@
-const Room = require('../models/Room');
-const Booking = require('../models/Booking');
+const Room = require('../models/room.model');
+const Booking = require('../models/booking.model');
 
 /**
  * Calculate room availability for a specific date (for calendar display)
