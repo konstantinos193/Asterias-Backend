@@ -425,8 +425,6 @@ export class AdminController {
   }
 
   @Get('users')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
   async getUsers(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
