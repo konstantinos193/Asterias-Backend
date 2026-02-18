@@ -11,5 +11,8 @@ try {
   // Continue anyway - dependencies might already be installed
 }
 
+console.log('Starting application...');
+console.log('PORT from environment:', process.env.PORT || 'not set');
+
 // Start the compiled application directly
 require('../dist/main.js');
