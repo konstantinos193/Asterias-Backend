@@ -1,40 +1,36 @@
 # Asterias Homes - Backend API
 
-![Express.js](https://img.shields.io/badge/Express.js-5.2.1-000000?style=for-the-badge&logo=express)
+![NestJS](https://img.shields.io/badge/NestJS-11.1.14-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)
 ![MongoDB](https://img.shields.io/badge/MongoDB-5.0+-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=node.js&logoColor=white)
-![Mongoose](https://img.shields.io/badge/Mongoose-9.1.5-880000?style=for-the-badge&logo=mongoose)
+![Mongoose](https://img.shields.io/badge/Mongoose-9.2.1-880000?style=for-the-badge&logo=mongoose)
 ![JWT](https://img.shields.io/badge/JWT-9.0.3-000000?style=for-the-badge&logo=jsonwebtokens)
-![Stripe](https://img.shields.io/badge/Stripe-20.3.0-635BFF?style=for-the-badge&logo=stripe&logoColor=white)
+![Stripe](https://img.shields.io/badge/Stripe-20.3.1-635BFF?style=for-the-badge&logo=stripe&logoColor=white)
 
-## Overview
+Backend API for Asterias Homes hotel booking system.
 
-Welcome to the digital graveyard where hotel bookings go to die (and occasionally get resurrected). This is the backend service for Asterias Homes - a hotel management system built with Node.js, Express.js, and MongoDB. It handles room bookings, guest management, admin operations, payment processing, and apparently your sanity if you stare at it long enough.
+## Technologies
 
-Built with love, caffeine, and questionable architectural decisions that somehow work in production.
-
-## Technologies Used
-
-- **Runtime**: Node.js 18+ (because Node 16 is dead and buried)
-- **Framework**: Express.js 5.2.1 (we like living on the edge)
-- **Database**: MongoDB with Mongoose 9.1.5 ODM
-- **Authentication**: JWT 9.0.3 (JSON Web Tokens - because passwords are for peasants)
-- **Payment**: Stripe 20.3.0 API integration
-- **Email**: Nodemailer 7.0.13 with Gmail SMTP (because every hotel needs spam)
-- **Validation**: Express-validator 7.3.1 (trust no one, validate everything)
-- **Security**: Helmet 8.1.0, CORS 2.8.6, Express-rate-limit 8.2.1
-- **File Upload**: Multer 2.0.2 (for those room pictures that never load correctly)
-- **Scheduling**: Node-cron 4.2.1 (automated tasks that run when you're not looking)
-- **Image Storage**: Cloudinary 2.9.0 (because hosting images yourself is 2010)
-- **XML**: xml2js 0.6.2, xmlbuilder 15.1.1 (for when JSON isn't painful enough)
+- **Runtime**: Node.js 18+
+- **Framework**: NestJS
+- **Database**: MongoDB with Mongoose
+- **Authentication**: JWT
+- **Payment**: Stripe API
+- **Email**: Nodemailer with Gmail SMTP
+- **Validation**: class-validator
+- **Security**: Helmet, CORS, Throttling
+- **File Upload**: Multer
+- **Scheduling**: @nestjs/schedule
+- **Image Storage**: Cloudinary
+- **XML**: xml2js, xmlbuilder
 
 ## Requirements
 
-- **Node.js**: Version 18.0.0 or higher (lower versions will mock you)
-- **npm**: Version 8.0.0 or higher (or yarn if you're fancy)
-- **MongoDB**: Version 5.0+ (local or MongoDB Atlas - your choice, your suffering)
-- **Stripe Account**: For payment processing (because free money isn't a thing)
-- **Gmail Account**: For email notifications (yes, we still use email in 2024)
+- **Node.js**: Version 18.0.0 or higher
+- **npm**: Version 8.0.0 or higher
+- **MongoDB**: Version 5.0+
+- **Stripe Account**: For payment processing
+- **Gmail Account**: For email notifications
 
 ## Installation
 
@@ -48,10 +44,9 @@ cd Asterias-Backend
 ```bash
 npm install
 ```
-This will download approximately 500MB of `node_modules` because JavaScript. Go grab coffee.
 
 ### 3. Environment Configuration
-Create a `.env` file in the backend directory (or watch everything break):
+Create a `.env` file in the backend directory:
 
 ```env
 # Server Configuration
@@ -75,7 +70,7 @@ STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
 # Email Configuration (Gmail)
 EMAIL_USER=your_gmail@gmail.com
 EMAIL_APP_PASSWORD=your_gmail_app_password
-# Note: Regular password won't work, Gmail requires app passwords (because security)
+# Note: Regular password won't work, Gmail requires app passwords
 
 # Booking.com Integration (if you're feeling adventurous)
 BOOKINGCOM_WEBHOOK_SECRET=your_bookingcom_webhook_secret
@@ -94,37 +89,37 @@ MEMORY_CHECK_INTERVAL=60000
 ```
 
 ### 4. Database Setup
-The application will automatically create collections and indexes on first run. If something goes wrong, MongoDB will tell you in its own special way.
+The application will automatically create collections and indexes on first run.
 
 ## Running the Project
 
 ### Development Mode
 ```bash
-npm run dev
+npm run start:dev
 ```
-This starts the server with nodemon for automatic restarts. It watches files, restarts the server when you save, and occasionally crashes for no apparent reason. Perfect for development.
+This starts the server with automatic restarts for development.
 
 ### Production Mode
 ```bash
 npm start
 ```
-This runs the server without watching. Because production doesn't need your constant file changes.
+This runs the server in production mode.
 
 ### Seed Database (Optional)
 ```bash
 npm run seed
 ```
-Populates your database with sample data so you don't have to manually create everything. Use at your own risk.
+Populates your database with sample data.
 
 ## API Endpoints
 
 ### Authentication
 - `POST /api/auth/register` - Register a new user account
 - `POST /api/auth/login` - Admin/user login (returns JWT token)
-- `POST /api/auth/logout` - Logout (because apparently we need an endpoint for that)
+- `POST /api/auth/logout` - Logout
 - `GET /api/auth/profile` - Get current user profile
 - `PUT /api/auth/profile` - Update user profile
-- `PUT /api/auth/change-password` - Change password (because forgetting passwords is human)
+- `PUT /api/auth/change-password` - Change password
 - `POST /api/auth/refresh` - Refresh JWT token
 - `POST /api/auth/create-admin` - Create admin user (use with caution)
 - `POST /api/auth/reset-admin-password` - Reset admin password (when everything goes wrong)
@@ -223,7 +218,7 @@ Populates your database with sample data so you don't have to manually create ev
 - `DELETE /api/images/:filename` - Delete image (admin only)
 - `GET /api/images` - List all uploaded images (admin only)
 
-### Booking.com Integration
+# Booking.com Integration
 - `POST /api/bookingcom-webhooks/notification` - Webhook endpoint for Booking.com notifications
 
 ### Utility
@@ -299,7 +294,7 @@ Populates your database with sample data so you don't have to manually create ev
 ## Email System
 
 ### Configuration
-The system uses Gmail SMTP via Nodemailer. Because everyone has Gmail, right?
+The system uses Gmail SMTP via Nodemailer.
 
 ### Features
 - Customer booking confirmations (multilingual support)
@@ -309,20 +304,20 @@ The system uses Gmail SMTP via Nodemailer. Because everyone has Gmail, right?
 - Contact form responses
 
 ### Templates
-Email templates support multiple languages (Greek, English, German) and are responsive for mobile devices. Because people still read emails on phones.
+Email templates support multiple languages (Greek, English, German) and are responsive for mobile devices.
 
 ## Payment Integration
 
 ### Stripe Setup
-1. Create a Stripe account (they'll take a cut, but that's capitalism)
+1. Create a Stripe account
 2. Get your API keys from the dashboard
 3. Configure webhook endpoints
 4. Test with Stripe test cards (4242 4242 4242 4242)
 
 ### Supported Payment Methods
 - Credit/Debit cards via Stripe
-- Cash on arrival (for those who prefer cash)
-- Refunds (because sometimes bookings go wrong)
+- Cash on arrival
+- Refunds
 
 ## Scheduled Tasks
 
@@ -331,74 +326,57 @@ The system runs automated tasks via node-cron:
 - Maintenance tasks
 - Data cleanup (if configured)
 
-These run in the background, doing their thing while you sleep. Or while you're debugging why they're not working.
-
 ## Memory Monitoring
 
-Optional memory monitoring to catch memory leaks before they catch you:
+Optional memory monitoring to catch memory leaks:
 - Configurable warning threshold
 - Periodic memory checks
 - Logs warnings when memory usage is high
-
-Because nothing says "production ready" like monitoring your server's existential crisis.
 
 ## Project Structure
 
 ```
 Asterias-Backend/
 ├── src/
-│   ├── index.js              # Express app setup and server initialization
+│   ├── main.ts               # NestJS app setup and server initialization
 │   ├── models/               # Database schemas (Mongoose models)
-│   │   ├── Booking.js
-│   │   ├── Contact.js
-│   │   ├── Offer.js
-│   │   ├── Room.js
-│   │   ├── Settings.js
-│   │   └── User.js
-│   ├── routes/               # API route definitions
-│   │   ├── admin.js
-│   │   ├── auth.js
-│   │   ├── availability.js
-│   │   ├── bookingcom.webhook.js
-│   │   ├── bookings.js
-│   │   ├── contact.js
-│   │   ├── images.js
-│   │   ├── offers.js
-│   │   ├── payments.js
-│   │   └── rooms.js
-│   ├── middleware/           # Custom middleware
-│   │   ├── apiKey.js         # API key authentication
-│   │   ├── auth.js           # JWT authentication
-│   │   └── settings.js       # Settings and maintenance mode
+│   │   ├── booking.model.ts
+│   │   ├── contact.model.ts
+│   │   ├── offer.model.ts
+│   │   ├── room.model.ts
+│   │   ├── settings.model.ts
+│   │   └── user.model.ts
+│   ├── modules/              # NestJS modules
+│   │   ├── admin/
+│   │   ├── auth/
+│   │   ├── availability/
+│   │   ├── bookings/
+│   │   ├── contact/
+│   │   ├── images/
+│   │   ├── offers/
+│   │   ├── payments/
+│   │   └── rooms/
 │   ├── services/             # Business logic and external integrations
-│   │   ├── bookingcom.service.js
-│   │   ├── emailService.js
-│   │   ├── emailTemplates.js
-│   │   ├── job-manager.js
-│   │   └── scheduledTasks.js
+│   │   ├── email.service.ts
+│   │   └── scheduled-tasks.service.ts
 │   ├── utils/                # Helper functions
-│   │   ├── availabilityCalculator.js
-│   │   ├── memory-monitor.js
-│   │   └── roomDataNormalizer.js
-│   ├── translations/         # Translation files
-│   │   └── emailTranslations.js
-│   └── seed.js               # Database seeding script
+│   │   └── memory-monitor.ts
+│   └── translations/         # Translation files
+│       └── email-translations.ts
 ├── uploads/                  # Uploaded images directory
-├── .env                      # Environment variables (not in git, obviously)
+├── .env                      # Environment variables
 ├── package.json              # Dependencies and scripts
-└── README.md                 # This file (you're reading it, congrats)
+└── README.md                 # This file
 ```
 
 ## Adding New Features
 
-Because you'll probably want to add features (or fix bugs):
-
 1. Create the model in `src/models/` if you need a new data type
-2. Add routes in `src/routes/` (follow existing patterns, please)
-3. Implement controllers/logic in route files or create services
-4. Add validation middleware if accepting user input
-5. Test it (ha, good one)
-6. Update this README (or don't, nobody reads these anyway)
+2. Add routes in appropriate module in `src/modules/`
+3. Implement controllers/logic in module files
+4. Add validation DTOs if accepting user input
+5. Test your changes
+6. Update documentation as needed
 
 ## Troubleshooting
 
@@ -406,13 +384,13 @@ Because you'll probably want to add features (or fix bugs):
 - Check MongoDB URI in `.env`
 - Ensure MongoDB service is running (if local)
 - Verify network connectivity for Atlas
-- Check if you're actually using the right database name
+- Check database name
 
 ### Email Not Sending
 - Check Gmail credentials in `.env`
 - Verify 2FA is properly configured
 - Generate app password (regular password won't work)
-- Check spam folder (it's always the spam folder)
+- Check spam folder
 
 ### Payment Issues
 - Verify Stripe API keys (test vs live, they're different)
@@ -421,15 +399,15 @@ Because you'll probably want to add features (or fix bugs):
 - Check Stripe dashboard for error logs
 
 ### Authentication Errors
-- Verify JWT_SECRET is set (and actually secret)
+- Verify JWT_SECRET is set
 - Check token expiration time
 - Ensure middleware order is correct
-- Try logging out and back in (the IT support classic)
+- Try logging out and back in
 
 ### Memory Issues
 - Enable memory monitoring to see what's eating your RAM
 - Check for memory leaks in long-running processes
-- Restart server periodically (the nuclear option)
+- Restart server periodically if needed
 
 ## Debug Mode
 
@@ -438,7 +416,7 @@ Enable debug logging by setting:
 NODE_ENV=development
 ```
 
-The server already logs important events to console. In production, you'll want proper logging (Winston, etc.), but for now console.log is your friend.
+The server logs important events to console. In production, use proper logging (Winston, etc.).
 
 ## Deployment
 
@@ -446,16 +424,16 @@ The server already logs important events to console. In production, you'll want 
 Set all required environment variables in your production environment. Missing variables = broken features.
 
 ### Database
-- Use MongoDB Atlas for production (or manage your own, if you hate yourself)
+- Use MongoDB Atlas for production
 - Set up proper network access rules
 - Configure backup schedules
 - Monitor performance
 
 ### Security
-- Use strong JWT secrets (long, random, complex)
-- Enable HTTPS (seriously, do this)
-- Configure CORS properly (don't allow all origins)
-- Set up rate limiting (enable that limiter we commented out)
+- Use strong JWT secrets
+- Enable HTTPS
+- Configure CORS properly
+- Set up rate limiting
 - Rotate API keys regularly
 
 ### Performance
@@ -472,8 +450,6 @@ Run tests with:
 npm test
 ```
 
-If tests exist. They might not. This is fine.
-
 ## Health Checks
 
 - `/health` - Basic health check (returns 200 if server is running)
@@ -482,31 +458,28 @@ If tests exist. They might not. This is fine.
 
 ## Known Issues
 
-- Rate limiting is currently disabled in development
-- Booking.com webhook integration is basic (needs more event types)
-- Some admin routes don't require authentication (by design or oversight, you decide)
-- Memory monitoring is optional and might not catch everything
+- Rate limiting configuration may need adjustment for production
+- Booking.com webhook integration supports basic event types
+- Some admin routes may require additional authentication
+- Memory monitoring is optional and may not catch all issues
 
 ## Contributing
 
-If you want to contribute:
 1. Don't break production
 2. Test your changes
 3. Update documentation
-4. Follow existing code style (or don't, consistency is overrated)
+4. Follow existing code style
 
 ## License
 
-MIT License - because who wants license drama?
+MIT License
 
 ## Contact
 
-For questions, complaints, or existential crises about this codebase:
+For questions about this codebase:
 - **Company**: Adinfinity
 - **Email**: adenfinity@gmail.com
 
 ---
 
-**Final Note**: This backend works with the Asterias Homes frontend application. Make sure both services are running and properly configured, or you'll have a bad time. The codebase has evolved over time, so some parts are cleaner than others. Such is life.
-
-**Good luck, and may your bookings never conflict.**
+This backend works with the Asterias Homes frontend application. Make sure both services are running and properly configured.
