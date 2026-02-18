@@ -78,12 +78,12 @@ async function bootstrap() {
   scheduledTasksService.startTasks();
   
   const port = process.env.PORT || 5000;
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
 
   console.log(`🚀 Server running on port ${port}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`📊 Health check: http://localhost:${port}/health`);
-  console.log(`📚 API Documentation: http://localhost:${port}/api/docs`);
+  console.log(`📊 Health check: http://0.0.0.0:${port}/health`);
+  console.log(`📚 API Documentation: http://0.0.0.0:${port}/api/docs`);
 
   // Graceful shutdown handling
   setupGracefulShutdown(app, scheduledTasksService, memoryMonitorService);
