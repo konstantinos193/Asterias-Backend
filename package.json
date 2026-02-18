@@ -2,7 +2,7 @@
   "name": "asterias-homes-backend",
   "version": "1.0.1",
   "description": "Backend API for Asterias Homes hotel booking system",
-  "main": "dist/main.js",
+  "main": "src/index.js",
   "scripts": {
     "start": "nest start",
     "start:dev": "nest start --watch",
