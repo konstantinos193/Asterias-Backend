@@ -4,7 +4,7 @@ const { execSync } = require('child_process');
 
 try {
   console.log('Building NestJS application...');
-  execSync('npm run build', { stdio: 'inherit' });
+  execSync('npm run build:render', { stdio: 'inherit' });
   console.log('Build completed successfully');
 } catch (error) {
   console.error('Build failed:', error.message);
