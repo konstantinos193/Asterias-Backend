@@ -3,8 +3,8 @@ services:
     name: asterias-homes-backend
     env: node
     plan: free
-    buildCommand: npm install && npm run build
-    startCommand: npm run start:prod
+    buildCommand: yarn install && yarn run build
+    startCommand: node dist/main.js
     envVars:
       - key: NODE_ENV
         value: production
