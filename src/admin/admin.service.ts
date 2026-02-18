@@ -699,6 +699,19 @@ export class AdminService {
     return room;
   }
 
+  async deleteRoom(id: string) {
+    const room = await this.roomModel.findByIdAndDelete(id);
+    
+    if (!room) {
+      throw new Error('Room not found');
+    }
+
+    return {
+      message: 'Room deleted successfully',
+      room
+    };
+  }
+
   async getOffers(params: { page: number; limit: number; active?: boolean }) {
     return await this.offersService.getAllOffers(params.page, params.limit, params.active);
   }

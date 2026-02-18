@@ -279,9 +279,24 @@ export class AdminController {
     }
   }
 
-  @Get('offers')
+  @Delete('rooms/:id')
   @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
+  async deleteRoom(@Param('id', MongoObjectIdPipe) id: string) {
+    try {
+      return await this.adminService.deleteRoom(id);
+    } catch (error) {
+      if (error.message === 'Room not found') {
+        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
+      }
+      throw new HttpException(
+        'Failed to delete room',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('offers')
   async getOffers(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
