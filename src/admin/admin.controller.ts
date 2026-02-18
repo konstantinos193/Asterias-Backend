@@ -65,8 +65,6 @@ export class AdminController {
   }
 
   @Get('bookings')
-  @UseGuards(AdminGuard)
-  @RequireAdmin()
   async getBookings(
     @Query('status') status?: string,
     @Query('paymentStatus') paymentStatus?: string,
@@ -99,7 +97,7 @@ export class AdminController {
   }
 
   @Get('bookings/:bookingId')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async getBookingById(@Param('bookingId', MongoObjectIdPipe) bookingId: string) {
     try {
@@ -116,7 +114,7 @@ export class AdminController {
   }
 
   @Put('bookings/:bookingId/cancel')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async cancelBooking(
     @Param('bookingId', MongoObjectIdPipe) bookingId: string,
@@ -139,7 +137,7 @@ export class AdminController {
   }
 
   @Put('bookings/bulk/status')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async bulkUpdateBookingStatus(
     @Body() body: { bookingIds: string[]; status: 'CONFIRMED' | 'PENDING' | 'CANCELLED' | 'CHECKED_IN' | 'CHECKED_OUT'; adminNotes?: string },
@@ -158,7 +156,7 @@ export class AdminController {
   }
 
   @Delete('bookings/bulk')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async bulkDeleteBookings(@Body() body: { bookingIds: string[] }) {
     try {
@@ -175,7 +173,7 @@ export class AdminController {
   }
 
   @Put('bookings/:bookingId/status')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async updateBookingStatus(
     @Param('bookingId', MongoObjectIdPipe) bookingId: string,
@@ -282,7 +280,7 @@ export class AdminController {
   }
 
   @Get('offers')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async getOffers(
     @Query('page') page?: string,
@@ -304,7 +302,7 @@ export class AdminController {
   }
 
   @Get('offers/:offerId')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async getOfferById(@Param('offerId', MongoObjectIdPipe) offerId: string) {
     try {
@@ -321,7 +319,7 @@ export class AdminController {
   }
 
   @Post('offers')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async createOffer(@Body() body: any) {
     try {
@@ -355,7 +353,7 @@ export class AdminController {
   }
 
   @Put('offers/:offerId')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async updateOffer(
     @Param('offerId', MongoObjectIdPipe) offerId: string,
@@ -378,7 +376,7 @@ export class AdminController {
   }
 
   @Delete('offers/:offerId')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async deleteOffer(@Param('offerId', MongoObjectIdPipe) offerId: string) {
     try {
@@ -395,7 +393,7 @@ export class AdminController {
   }
 
   @Put('offers/:offerId/toggle')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async toggleOfferStatus(@Param('offerId', MongoObjectIdPipe) offerId: string) {
     try {
@@ -412,7 +410,7 @@ export class AdminController {
   }
 
   @Get('users')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
   async getUsers(
     @Query('page') page?: string,
