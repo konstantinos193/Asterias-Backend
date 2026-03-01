@@ -9,6 +9,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 import { EmailService } from './email/email.service';
 import { ScheduledTasksService } from './scheduled-tasks/scheduled-tasks.service';
 import { MemoryMonitorService } from './utils/memory-monitor.service';
+import { KeepAliveService } from './keep-alive/keep-alive.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -62,6 +63,7 @@ async function bootstrap() {
   const emailService = app.get(EmailService);
   const scheduledTasksService = app.get(ScheduledTasksService);
   const memoryMonitorService = app.get(MemoryMonitorService, { strict: false });
+  const keepAliveService = app.get(KeepAliveService, { strict: false });
 
   // Initialize email service
   emailService.initializeTransporter();
@@ -76,6 +78,12 @@ async function bootstrap() {
 
   // Start scheduled tasks
   scheduledTasksService.startTasks();
+
+  // Start keep-alive service in production
+  if (process.env.NODE_ENV === 'production') {
+    keepAliveService?.startKeepAlive();
+    console.log('💓 Keep-alive service started');
+  }
   
   const port = process.env.PORT || 5000;
   await app.listen(port, '0.0.0.0');
@@ -86,10 +94,10 @@ async function bootstrap() {
   console.log(`📚 API Documentation: http://0.0.0.0:${port}/api/docs`);
 
   // Graceful shutdown handling
-  setupGracefulShutdown(app, scheduledTasksService, memoryMonitorService);
+  setupGracefulShutdown(app, scheduledTasksService, memoryMonitorService, keepAliveService);
 }
 
-function setupGracefulShutdown(app: any, scheduledTasksService: ScheduledTasksService, memoryMonitorService?: MemoryMonitorService) {
+function setupGracefulShutdown(app: any, scheduledTasksService: ScheduledTasksService, memoryMonitorService?: MemoryMonitorService, keepAliveService?: KeepAliveService) {
   const gracefulShutdown = async (signal: string) => {
     console.log(`${signal} received, shutting down gracefully`);
     try {
@@ -98,6 +106,9 @@ function setupGracefulShutdown(app: any, scheduledTasksService: ScheduledTasksSe
       
       // Stop scheduled tasks
       scheduledTasksService.stopTasks();
+      
+      // Stop keep-alive service
+      keepAliveService?.stopKeepAlive();
       
       // Close app
       await app.close();

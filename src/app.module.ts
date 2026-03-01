@@ -20,12 +20,14 @@ import { ScheduledTasksModule } from './scheduled-tasks/scheduled-tasks.module';
 import { SettingsModule } from './settings/settings.module';
 import { OffersModule } from './offers/offers.module';
 import { ContactModule } from './contact/contact.module';
+import { KeepAliveModule } from './keep-alive/keep-alive.module';
 
 // Common modules
 import { DatabaseModule } from './database/database.module';
 
 // Utils
 import { MemoryMonitorService } from './utils/memory-monitor.service';
+import { KeepAliveService } from './keep-alive/keep-alive.service';
 
 @Module({
   imports: [
@@ -64,8 +66,9 @@ import { MemoryMonitorService } from './utils/memory-monitor.service';
     SettingsModule,
     OffersModule,
     ContactModule,
+    KeepAliveModule,
   ],
   controllers: [],
-  providers: [MemoryMonitorService],
+  providers: [MemoryMonitorService, KeepAliveService],
 })
 export class AppModule {}
