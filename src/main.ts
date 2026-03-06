@@ -45,8 +45,8 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new TransformInterceptor());
 
-  // API prefix
-  app.setGlobalPrefix('api');
+  // API prefix (health excluded so it stays at /health for uptime monitors)
+  app.setGlobalPrefix('api', { exclude: ['health'] });
 
   // Swagger documentation
   const config = new DocumentBuilder()
