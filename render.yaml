@@ -3,7 +3,7 @@ services:
     name: asterias-homes-backend
     env: node
     plan: free
-    buildCommand: yarn install && yarn run build
+    buildCommand: npm install && npm run build:render
     startCommand: node dist/main.js
     envVars:
       - key: NODE_ENV
