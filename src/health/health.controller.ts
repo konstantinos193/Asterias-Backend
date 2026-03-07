@@ -10,9 +10,7 @@ export class HealthController {
   constructor(
     @InjectConnection() private readonly dbConnection: Connection,
   ) {
-    this.stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy', {
-      apiVersion: '2026-02-25.clover',
-    });
+    this.stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy');
   }
   @Get('health/database')
   async getDatabaseHealth() {
