@@ -1,13 +1,13 @@
 # Asterias Homes - Backend API
 
-![NestJS](https://img.shields.io/badge/NestJS-11.1.14-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)
-![MongoDB](https://img.shields.io/badge/MongoDB-5.0+-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
+![NestJS](https://img.shields.io/badge/NestJS-11.1.16-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)
+![MongoDB](https://img.shields.io/badge/MongoDB-7.1.0-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=node.js&logoColor=white)
-![Mongoose](https://img.shields.io/badge/Mongoose-9.2.1-880000?style=for-the-badge&logo=mongoose)
+![Mongoose](https://img.shields.io/badge/Mongoose-9.2.4-880000?style=for-the-badge&logo=mongoose)
 ![JWT](https://img.shields.io/badge/JWT-9.0.3-000000?style=for-the-badge&logo=jsonwebtokens)
-![Stripe](https://img.shields.io/badge/Stripe-20.3.1-635BFF?style=for-the-badge&logo=stripe&logoColor=white)
+![Stripe](https://img.shields.io/badge/Stripe-20.4.1-635BFF?style=for-the-badge&logo=stripe&logoColor=white)
 
-Backend API for Asterias Homes hotel booking system.
+Backend API for Asterias Homes hotel booking system. Because even hotels need to deal with our digital nonsense.
 
 ## Technologies
 
@@ -26,11 +26,11 @@ Backend API for Asterias Homes hotel booking system.
 
 ## Requirements
 
-- **Node.js**: Version 18.0.0 or higher
-- **npm**: Version 8.0.0 or higher
-- **MongoDB**: Version 5.0+
-- **Stripe Account**: For payment processing
-- **Gmail Account**: For email notifications
+- **Node.js**: Version 18.0.0 or higher (don't even try with older versions, we're not supporting your ancient setup)
+- **npm**: Version 8.0.0 or higher (unless you enjoy dependency hell)
+- **MongoDB**: Version 5.0+ (or just use Atlas like a normal person)
+- **Stripe Account**: For taking people's money legally
+- **Gmail Account**: For sending emails that probably end up in spam
 
 ## Installation
 
@@ -38,11 +38,14 @@ Backend API for Asterias Homes hotel booking system.
 ```bash
 git clone <repository-url>
 cd Asterias-Backend
+# Welcome to the rabbit hole
 ```
 
 ### 2. Install Dependencies
 ```bash
 npm install
+# Grab a coffee, this might take a while
+# Or don't, we're not your parents
 ```
 
 ### 3. Environment Configuration
@@ -61,7 +64,9 @@ MONGODB_URI=mongodb://localhost:27017/asterias-homes
 
 # JWT Authentication
 JWT_SECRET=your_super_secret_jwt_key_here_make_it_long_and_random
+# Seriously, make it random. 'password123' will get you hacked
 JWT_EXPIRES_IN=7d
+# Because users never log out anyway
 
 # Stripe Payment
 STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key
@@ -72,12 +77,14 @@ EMAIL_USER=your_gmail@gmail.com
 EMAIL_APP_PASSWORD=your_gmail_app_password
 # Note: Regular password won't work, Gmail requires app passwords
 
-# Booking.com Integration (if you're feeling adventurous)
+### Booking.com Integration (if you're feeling adventurous)
 BOOKINGCOM_WEBHOOK_SECRET=your_bookingcom_webhook_secret
+# Good luck with their API. You'll need it.
 
 # Admin Configuration
 ADMIN_EMAIL=admin@asteriashomes.com
 ADMIN_PASSWORD=secure_admin_password_change_this_immediately
+# Change it. Or don't. See if we care.
 
 # API Keys
 API_KEY=your_api_key_for_admin_access
@@ -90,6 +97,7 @@ MEMORY_CHECK_INTERVAL=60000
 
 ### 4. Database Setup
 The application will automatically create collections and indexes on first run.
+# Magic? No. Just code that you'll probably break eventually.
 
 ## Running the Project
 
@@ -98,18 +106,21 @@ The application will automatically create collections and indexes on first run.
 npm run start:dev
 ```
 This starts the server with automatic restarts for development.
+# Watch it crash and burn repeatedly. That's just development.
 
 ### Production Mode
 ```bash
 npm start
 ```
 This runs the server in production mode.
+# Pray it doesn't explode. We're not responsible.
 
 ### Seed Database (Optional)
 ```bash
 npm run seed
 ```
 Populates your database with sample data.
+# Fake data for your fake hotel. Perfect.
 
 ## API Endpoints
 
@@ -123,6 +134,7 @@ Populates your database with sample data.
 - `POST /api/auth/refresh` - Refresh JWT token
 - `POST /api/auth/create-admin` - Create admin user (use with caution)
 - `POST /api/auth/reset-admin-password` - Reset admin password (when everything goes wrong)
+# Because you WILL forget the password
 
 ### Rooms
 - `GET /api/rooms` - Get all rooms (public, supports optional auth)
@@ -131,6 +143,7 @@ Populates your database with sample data.
 - `POST /api/rooms` - Create new room (admin only)
 - `PUT /api/rooms/:id` - Update room (admin only)
 - `DELETE /api/rooms/:id` - Delete room (admin only, use API key or admin token)
+# Hope you backed it up first. You didn't, did you?
 - `POST /api/rooms/:id/images` - Add images to room
 - `GET /api/rooms/stats/overview` - Get room statistics
 
@@ -385,29 +398,34 @@ Asterias-Backend/
 - Ensure MongoDB service is running (if local)
 - Verify network connectivity for Atlas
 - Check database name
+- Or just blame the cloud provider. That's usually the issue.
 
 ### Email Not Sending
 - Check Gmail credentials in `.env`
 - Verify 2FA is properly configured
 - Generate app password (regular password won't work)
 - Check spam folder
+- Gmail probably blocked it anyway. Thanks, Google.
 
 ### Payment Issues
 - Verify Stripe API keys (test vs live, they're different)
 - Check webhook configuration and endpoint
 - Test with Stripe test cards first
 - Check Stripe dashboard for error logs
+- Money problems are always the worst problems.
 
 ### Authentication Errors
 - Verify JWT_SECRET is set
 - Check token expiration time
 - Ensure middleware order is correct
 - Try logging out and back in
+- Or just clear cookies. That fixes everything.
 
 ### Memory Issues
 - Enable memory monitoring to see what's eating your RAM
 - Check for memory leaks in long-running processes
 - Restart server periodically if needed
+- Or just throw more RAM at it. That's the enterprise solution.
 
 ## Debug Mode
 
@@ -462,13 +480,14 @@ npm test
 - Booking.com webhook integration supports basic event types
 - Some admin routes may require additional authentication
 - Memory monitoring is optional and may not catch all issues
+- Basically, it works until it doesn't. Welcome to software development.
 
 ## Contributing
 
-1. Don't break production
-2. Test your changes
-3. Update documentation
-4. Follow existing code style
+1. Don't break production (seriously, don't)
+2. Test your changes (unless you enjoy debugging at 3 AM)
+3. Update documentation (or future you will hate current you)
+4. Follow existing code style (consistency is for cowards, but do it anyway)
 
 ## License
 
@@ -483,3 +502,6 @@ For questions about this codebase:
 ---
 
 This backend works with the Asterias Homes frontend application. Make sure both services are running and properly configured.
+
+# Or don't. Live dangerously. See what happens.
+# (Spoiler: nothing good will happen)
