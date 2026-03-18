@@ -7,6 +7,7 @@ import { ApiKeyAuthGuard } from '../auth/guards/api-key-auth.guard';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 import { SendEmailDto } from './dto/send-email.dto';
+import { RoomCombinationRequestDto, MultiRoomBookingDto, QuickRoomSearchDto } from './dto/room-combination.dto';
 import { MongoObjectIdPipe } from '../common/pipes/mongodb-object-id.pipe';
 
 @ApiTags('bookings')
@@ -93,5 +94,31 @@ export class BookingsController {
   @ApiResponse({ status: 404, description: 'Booking not found' })
   async sendEmail(@Param('id', MongoObjectIdPipe) id: string, @Body() sendEmailDto: SendEmailDto) {
     return this.bookingsService.sendEmail(id, sendEmailDto);
+  }
+
+  @Post('room-combinations')
+  @ApiOperation({ summary: 'Get optimal room combinations for guests' })
+  @ApiResponse({ status: 200, description: 'Room combinations calculated successfully' })
+  async getRoomCombinations(@Body() request: RoomCombinationRequestDto) {
+    return this.bookingsService.getRoomCombinations(request);
+  }
+
+  @Post('multi-room-booking')
+  @ApiOperation({ summary: 'Create multi-room booking' })
+  @ApiResponse({ status: 201, description: 'Multi-room booking created successfully' })
+  async createMultiRoomBooking(@Body() multiRoomBookingDto: MultiRoomBookingDto) {
+    return this.bookingsService.createMultiRoomBooking(multiRoomBookingDto);
+  }
+
+  @Post('quick-room-search')
+  @ApiOperation({ summary: 'Quick room search for backward compatibility' })
+  @ApiResponse({ status: 200, description: 'Best room found successfully' })
+  async quickRoomSearch(@Body() searchDto: QuickRoomSearchDto) {
+    return this.bookingsService.findBestRoom(
+      searchDto.adults, 
+      searchDto.children, 
+      searchDto.checkIn, 
+      searchDto.checkOut
+    );
   }
 }

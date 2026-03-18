@@ -143,6 +143,47 @@ export class Booking {
   @ApiProperty()
   @Prop({ default: false })
   reminderSent: boolean;
+
+  @ApiProperty({ description: 'Parent booking ID for multi-room bookings', required: false })
+  @Prop({ default: null })
+  parentBookingId: Types.ObjectId;
+
+  @ApiProperty({ description: 'Child booking IDs for multi-room bookings', type: [Types.ObjectId], default: [] })
+  @Prop({ type: [Types.ObjectId], default: [] })
+  childBookingIds: Types.ObjectId[];
+
+  @ApiProperty({ description: 'Room combination details for multi-room bookings', required: false })
+  @Prop({ 
+    type: {
+      rooms: [{
+        roomId: { type: Types.ObjectId, required: true },
+        roomName: { type: String, required: true },
+        count: { type: Number, required: true, min: 1 },
+        occupancy: { type: Number, required: true, min: 1 },
+        pricePerRoom: { type: Number, required: true, min: 0 },
+        totalPrice: { type: Number, required: true, min: 0 }
+      }],
+      totalCapacity: { type: Number, required: true, min: 1 },
+      totalPrice: { type: Number, required: true, min: 0 },
+      unusedBeds: { type: Number, required: true, min: 0 },
+      combinationType: { type: String, enum: ['cheapest', 'best_value', 'most_comfortable'], required: true }
+    },
+    default: null
+  })
+  roomCombination: {
+    rooms: Array<{
+      roomId: Types.ObjectId;
+      roomName: string;
+      count: number;
+      occupancy: number;
+      pricePerRoom: number;
+      totalPrice: number;
+    }>;
+    totalCapacity: number;
+    totalPrice: number;
+    unusedBeds: number;
+    combinationType: 'cheapest' | 'best_value' | 'most_comfortable';
+  };
 }
 
 export const BookingSchema = SchemaFactory.createForClass(Booking);
@@ -152,6 +193,8 @@ BookingSchema.index({ roomId: 1, checkIn: 1, checkOut: 1 });
 BookingSchema.index({ userId: 1 });
 BookingSchema.index({ paymentStatus: 1 });
 BookingSchema.index({ bookingStatus: 1 });
+BookingSchema.index({ parentBookingId: 1 });
+BookingSchema.index({ childBookingIds: 1 });
 
 // Method to drop problematic indexes
 BookingSchema.statics.dropProblematicIndexes = async function() {

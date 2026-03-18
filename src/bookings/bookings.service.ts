@@ -1,20 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Booking, BookingDocument, BookingModel } from '../models/booking.model';
 import { Room, RoomDocument } from '../models/room.model';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 import { SendEmailDto } from './dto/send-email.dto';
 import { EmailService } from '../email/email.service';
+import { RoomCombinationService, CombinationRequest, RoomCombination } from './room-combination.service';
+import { RoomCombinationRequestDto, MultiRoomBookingDto } from './dto/room-combination.dto';
 
 @Injectable()
 export class BookingsService {
   constructor(
     @InjectModel(Booking.name) private bookingModel: BookingModel,
     @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
-    private emailService: EmailService
-) {}
+    private emailService: EmailService,
+    private roomCombinationService: RoomCombinationService
+  ) {}
 
   async create(createBookingDto: CreateBookingDto): Promise<Booking> {
     const booking = new this.bookingModel(createBookingDto);
@@ -141,5 +144,111 @@ export class BookingsService {
     } else {
       throw new Error('Failed to send email');
     }
+  }
+
+  /**
+   * Get optimal room combinations for given guests and dates
+   */
+  async getRoomCombinations(request: RoomCombinationRequestDto): Promise<RoomCombination[]> {
+    const combinationRequest: CombinationRequest = {
+      adults: request.adults,
+      children: request.children,
+      checkIn: request.checkIn,
+      checkOut: request.checkOut,
+      maxCombinations: request.maxCombinations || 10,
+      preferMultiRoom: request.preferMultiRoom !== false // Default to true
+    };
+
+    return this.roomCombinationService.generateOptimalCombinations(combinationRequest);
+  }
+
+  /**
+   * Create multi-room booking
+   */
+  async createMultiRoomBooking(multiRoomBookingDto: MultiRoomBookingDto): Promise<Booking[]> {
+    const { combination, checkIn, checkOut, guestFirstName, guestLastName, guestEmail, guestPhone, specialRequests, language, paymentMethod, totalAmount } = multiRoomBookingDto;
+
+    const bookings: Booking[] = [];
+    const baseBookingNumber = await this.generateBookingNumber();
+
+    for (let i = 0; i < combination.rooms.length; i++) {
+      const room = combination.rooms[i];
+      
+      for (let j = 0; j < room.count; j++) {
+        const bookingNumber = combination.rooms.length > 1 ? `${baseBookingNumber}-${String.fromCharCode(65 + i)}${j + 1}` : baseBookingNumber;
+        
+        const bookingData = {
+          bookingNumber,
+          roomId: new (require('mongoose').Types.ObjectId)(room.roomId),
+          guestInfo: {
+            firstName: guestFirstName,
+            lastName: guestLastName,
+            email: guestEmail,
+            phone: guestPhone,
+            specialRequests: specialRequests || '',
+            language: language || 'en'
+          },
+          checkIn: new Date(checkIn),
+          checkOut: new Date(checkOut),
+          adults: Math.min(room.occupancy, 2), // Simple split, can be improved
+          children: Math.max(0, room.occupancy - 2),
+          totalAmount: room.totalPrice / room.count,
+          paymentMethod,
+          paymentStatus: 'PENDING' as const,
+          bookingStatus: 'CONFIRMED' as const,
+          notes: `Part of multi-room booking ${baseBookingNumber}. Room ${i + 1} of ${combination.rooms.length}.`,
+          roomCombination: combination
+        };
+
+        const booking = new this.bookingModel(bookingData);
+        bookings.push(await booking.save());
+      }
+    }
+
+    // Link bookings together
+    if (bookings.length > 1) {
+      const parentBooking = bookings[0] as BookingDocument;
+      const childBookingIds = bookings.slice(1).map(b => (b as BookingDocument)._id);
+      
+      await this.bookingModel.updateMany(
+        { _id: { $in: childBookingIds } },
+        { parentBookingId: parentBooking._id }
+      );
+      
+      await this.bookingModel.findByIdAndUpdate(
+        parentBooking._id,
+        { childBookingIds }
+      );
+    }
+
+    return bookings;
+  }
+
+  /**
+   * Quick room search for backward compatibility
+   */
+  async findBestRoom(adults: number, children: number, checkIn: Date, checkOut: Date): Promise<Room | null> {
+    return this.roomCombinationService.findBestRoom(adults, children, checkIn, checkOut);
+  }
+
+  /**
+   * Generate unique booking number
+   */
+  private async generateBookingNumber(): Promise<string> {
+    const prefix = 'AST';
+    const date = new Date();
+    const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    
+    let bookingNumber = `${prefix}${dateStr}${random}`;
+    
+    // Ensure uniqueness
+    const existing = await this.bookingModel.findOne({ bookingNumber });
+    if (existing) {
+      // Add a suffix if collision occurs
+      bookingNumber += Math.floor(Math.random() * 100);
+    }
+    
+    return bookingNumber;
   }
 }
