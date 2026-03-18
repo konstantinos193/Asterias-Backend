@@ -24,6 +24,12 @@ async function bootstrap() {
     next();
   });
 
+  // Handle favicon.ico requests to prevent 404 errors
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.get('/favicon.ico', (req: any, res: any) => {
+    res.status(204).end();
+  });
+
   // CORS configuration
   app.enableCors({
     origin: ['http://localhost:3000', 'https://asteriashome.gr', 'http://localhost:3001'],

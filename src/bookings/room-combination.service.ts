@@ -49,7 +49,7 @@ export class RoomCombinationService {
   /**
    * Build room inventory with availability for given dates
    */
-  async buildRoomInventory(checkIn: Date, checkOut: Date): Promise<RoomInventoryItem[]> {
+  async buildRoomInventory(checkIn: Date, checkOut: Date, guestCount?: number): Promise<RoomInventoryItem[]> {
     const rooms = await this.roomModel.find({ totalRooms: { $gt: 0 } }).exec();
     const inventory: RoomInventoryItem[] = [];
 
@@ -69,6 +69,32 @@ export class RoomCombinationService {
       }
     }
 
+    // Sort by actual price for the guest count if provided, otherwise by base price
+    if (guestCount) {
+      return inventory.sort((a, b) => {
+        const priceA = this.getPriceForOccupancy(a, guestCount);
+        const priceB = this.getPriceForOccupancy(b, guestCount);
+        
+        // Prioritize rooms with occupancy pricing
+        const aHasOccupancyPricing = a.pricingByOccupancy && a.pricingByOccupancy.length > 0;
+        const bHasOccupancyPricing = b.pricingByOccupancy && b.pricingByOccupancy.length > 0;
+        
+        // STRONG PRIORITY: If room A has exact occupancy pricing for this guest count, put it first
+        const aHasExactPricing = a.pricingByOccupancy && a.pricingByOccupancy.some(p => p.guests === guestCount);
+        const bHasExactPricing = b.pricingByOccupancy && b.pricingByOccupancy.some(p => p.guests === guestCount);
+        
+        if (aHasExactPricing && !bHasExactPricing) return -1;
+        if (!aHasExactPricing && bHasExactPricing) return 1;
+        
+        // Then prioritize any occupancy pricing over none
+        if (aHasOccupancyPricing && !bHasOccupancyPricing) return -1;
+        if (!aHasOccupancyPricing && bHasOccupancyPricing) return 1;
+        
+        // Finally sort by price
+        return priceA - priceB;
+      });
+    }
+    
     return inventory.sort((a, b) => a.price - b.price);
   }
 
@@ -99,7 +125,7 @@ export class RoomCombinationService {
     const { adults, children, checkIn, checkOut, maxCombinations = 10, preferMultiRoom = true } = request;
     const totalGuests = adults + children;
     
-    const inventory = await this.buildRoomInventory(checkIn, checkOut);
+    const inventory = await this.buildRoomInventory(checkIn, checkOut, totalGuests);
     
     if (inventory.length === 0) {
       return [];
@@ -108,15 +134,11 @@ export class RoomCombinationService {
     const combinations: RoomCombination[] = [];
 
     if (preferMultiRoom) {
-      // PRIORITY: Always generate multi-room combinations first
+      // Generate BOTH single and multi-room options for comparison
       combinations.push(...await this.generateMultiRoomCombinations(inventory, totalGuests));
-      
-      // ONLY add single-room options if no multi-room combinations exist
-      if (combinations.length === 0) {
-        const singleRoomCombo = await this.generateSingleRoomOption(inventory, totalGuests);
-        if (singleRoomCombo) {
-          combinations.push(singleRoomCombo);
-        }
+      const singleRoomOption = await this.generateSingleRoomOption(inventory, totalGuests);
+      if (singleRoomOption) {
+        combinations.push(singleRoomOption);
       }
     } else {
       // LEGACY: Generate all combinations (including single rooms)
@@ -140,24 +162,89 @@ export class RoomCombinationService {
   private async generateMultiRoomCombinations(inventory: RoomInventoryItem[], totalGuests: number): Promise<RoomCombination[]> {
     const combinations: RoomCombination[] = [];
 
-    // Strategy 1: Best multi-room combinations (2+ rooms)
-    const bestMultiRoom = this.findBestMultiRoomCombination(inventory, totalGuests, 'price');
-    if (bestMultiRoom && bestMultiRoom.rooms.length > 1) {
-      combinations.push(bestMultiRoom);
-    }
+    // Strategy: Try combinations of 2 rooms of the same type
+    for (const room of inventory) {
+      if (room.available >= 2) {
+        // Can use 2 rooms of the same type
+        const totalCapacity = 2 * room.maxOccupancy;
+        if (totalCapacity >= totalGuests) {
+          const guestsPerRoom = Math.ceil(totalGuests / 2);
+          const pricePerRoom = this.getPriceForOccupancy(room, guestsPerRoom);
+          const totalPrice = pricePerRoom * 2;
+          const unusedBeds = totalCapacity - totalGuests;
+          const score = totalPrice + (unusedBeds * 10);
 
-    // Strategy 2: Different room count combinations
-    for (let roomCount = 2; roomCount <= Math.min(4, Math.ceil(totalGuests / 2)); roomCount++) {
-      const combo = this.findFixedRoomCountCombination(inventory, totalGuests, roomCount);
-      if (combo && combo.rooms.length > 1) {
-        combinations.push(combo);
+          combinations.push({
+            rooms: [
+              {
+                roomId: room.id,
+                roomName: room.name,
+                count: 1,
+                occupancy: guestsPerRoom,
+                pricePerRoom,
+                totalPrice: pricePerRoom
+              },
+              {
+                roomId: room.id,
+                roomName: room.name,
+                count: 1,
+                occupancy: guestsPerRoom,
+                pricePerRoom,
+                totalPrice: pricePerRoom
+              }
+            ],
+            totalCapacity,
+            totalPrice,
+            unusedBeds,
+            score,
+            combinationType: 'best_value'
+          });
+        }
       }
     }
 
-    // Strategy 3: Comfort-focused multi-room
-    const comfortCombo = this.findBestMultiRoomCombination(inventory, totalGuests, 'fit');
-    if (comfortCombo && comfortCombo.rooms.length > 1) {
-      combinations.push(comfortCombo);
+    // Strategy: Try combinations of different room types
+    for (let i = 0; i < inventory.length; i++) {
+      for (let j = i + 1; j < inventory.length; j++) {
+        const room1 = inventory[i];
+        const room2 = inventory[j];
+        
+        if (room1.available > 0 && room2.available > 0) {
+          const totalCapacity = room1.maxOccupancy + room2.maxOccupancy;
+          if (totalCapacity >= totalGuests) {
+            const room1Details = {
+              roomId: room1.id,
+              roomName: room1.name,
+              count: 1,
+              occupancy: Math.min(room1.maxOccupancy, totalGuests),
+              pricePerRoom: this.getPriceForOccupancy(room1, Math.min(room1.maxOccupancy, totalGuests)),
+              totalPrice: this.getPriceForOccupancy(room1, Math.min(room1.maxOccupancy, totalGuests))
+            };
+            
+            const room2Details = {
+              roomId: room2.id,
+              roomName: room2.name,
+              count: 1,
+              occupancy: Math.min(room2.maxOccupancy, Math.max(0, totalGuests - room1.maxOccupancy)),
+              pricePerRoom: this.getPriceForOccupancy(room2, Math.min(room2.maxOccupancy, Math.max(0, totalGuests - room1.maxOccupancy))),
+              totalPrice: this.getPriceForOccupancy(room2, Math.min(room2.maxOccupancy, Math.max(0, totalGuests - room1.maxOccupancy)))
+            };
+
+            const totalPrice = room1Details.totalPrice + room2Details.totalPrice;
+            const unusedBeds = totalCapacity - totalGuests;
+            const score = totalPrice + (unusedBeds * 10);
+
+            combinations.push({
+              rooms: [room1Details, room2Details],
+              totalCapacity,
+              totalPrice,
+              unusedBeds,
+              score,
+              combinationType: 'best_value'
+            });
+          }
+        }
+      }
     }
 
     return combinations.filter(combo => combo.rooms.length > 1);
@@ -167,7 +254,21 @@ export class RoomCombinationService {
    * Generate single-room option ONLY as fallback
    */
   private async generateSingleRoomOption(inventory: RoomInventoryItem[], totalGuests: number): Promise<RoomCombination | null> {
-    const singleRoom = inventory.find(room => room.maxOccupancy >= totalGuests && room.available >= 1);
+    // Find the first room that fits (inventory is already sorted by priority)
+    // Check both max occupancy AND if room has exact pricing for this guest count
+    const singleRoom = inventory.find(room => {
+      const canAccommodate = room.maxOccupancy >= totalGuests && room.available >= 1;
+      if (!canAccommodate) return false;
+      
+      // If room has occupancy pricing, check if it has exact pricing for this guest count
+      if (room.pricingByOccupancy && room.pricingByOccupancy.length > 0) {
+        return room.pricingByOccupancy.some(p => p.guests === totalGuests);
+      }
+      
+      // Otherwise, use base capacity logic
+      return true;
+    });
+    
     if (singleRoom) {
       return this.createCombination([{
         roomId: singleRoom.id,
@@ -183,8 +284,21 @@ export class RoomCombinationService {
   private async generateCheapestCombinations(inventory: RoomInventoryItem[], totalGuests: number): Promise<RoomCombination[]> {
     const combinations: RoomCombination[] = [];
 
-    // Strategy 1: Find single room that fits all guests
-    const singleRoom = inventory.find(room => room.maxOccupancy >= totalGuests && room.available >= 1);
+    // Strategy 1: Find single room that fits all guests (inventory is already prioritized)
+    // Check both max occupancy AND if room has exact pricing for this guest count
+    const singleRoom = inventory.find(room => {
+      const canAccommodate = room.maxOccupancy >= totalGuests && room.available >= 1;
+      if (!canAccommodate) return false;
+      
+      // If room has occupancy pricing, check if it has exact pricing for this guest count
+      if (room.pricingByOccupancy && room.pricingByOccupancy.length > 0) {
+        return room.pricingByOccupancy.some(p => p.guests === totalGuests);
+      }
+      
+      // Otherwise, use base capacity logic
+      return true;
+    });
+    
     if (singleRoom) {
       combinations.push(this.createCombination([{
         roomId: singleRoom.id,
@@ -334,8 +448,18 @@ export class RoomCombinationService {
    * Get price for specific occupancy level
    */
   private getPriceForOccupancy(room: RoomInventoryItem, guests: number): number {
-    const occupancyPricing = room.pricingByOccupancy.find(p => p.guests >= guests);
-    return occupancyPricing ? occupancyPricing.price : room.price;
+    // First try to find exact match for guest count
+    const exactPricing = room.pricingByOccupancy.find(p => p.guests === guests);
+    if (exactPricing) {
+      return exactPricing.price;
+    }
+    
+    // If no exact match, find the cheapest option that can accommodate the guests
+    const suitablePricing = room.pricingByOccupancy
+      .filter(p => p.guests >= guests)
+      .sort((a, b) => a.price - b.price)[0];
+    
+    return suitablePricing ? suitablePricing.price : room.price;
   }
 
   /**
@@ -365,7 +489,7 @@ export class RoomCombinationService {
    */
   async findBestRoom(adults: number, children: number, checkIn: Date, checkOut: Date): Promise<Room | null> {
     const totalGuests = adults + children;
-    const inventory = await this.buildRoomInventory(checkIn, checkOut);
+    const inventory = await this.buildRoomInventory(checkIn, checkOut, totalGuests);
 
     // First try to find multi-room combinations
     const multiRoomCombos = await this.generateMultiRoomCombinations(inventory, totalGuests);
