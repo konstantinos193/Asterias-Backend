@@ -24,6 +24,82 @@ export class BookingsService {
     return booking.save();
   }
 
+  async findAllPaginated(params?: { page?: number; limit?: number; status?: string }): Promise<{ bookings: Booking[]; pagination: { page: number; limit: number; total: number; pages: number } }> {
+    const page = params?.page || 1;
+    const limit = params?.limit || 10;
+    const skip = (page - 1) * limit;
+
+    const filter: any = {};
+    if (params?.status) {
+      filter.bookingStatus = params.status.toUpperCase();
+    }
+
+    const [bookings, total] = await Promise.all([
+      this.bookingModel.find(filter).populate('roomId').sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.bookingModel.countDocuments(filter),
+    ]);
+
+    return {
+      bookings,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    };
+  }
+
+  async findMyBookings(userId: string, params?: { page?: number; limit?: number; status?: string }): Promise<{ bookings: Booking[]; pagination: { page: number; limit: number; total: number; pages: number } }> {
+    const page = params?.page || 1;
+    const limit = params?.limit || 10;
+    const skip = (page - 1) * limit;
+
+    const filter: any = { userId: new Types.ObjectId(userId) };
+    if (params?.status) {
+      filter.bookingStatus = params.status.toUpperCase();
+    }
+
+    const [bookings, total] = await Promise.all([
+      this.bookingModel.find(filter).populate('roomId').sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.bookingModel.countDocuments(filter),
+    ]);
+
+    return {
+      bookings,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async cancelBooking(bookingId: string, userId?: string): Promise<Booking | null> {
+    const filter: any = { _id: bookingId };
+    if (userId) {
+      filter.userId = new Types.ObjectId(userId);
+    }
+
+    const booking = await this.bookingModel.findOne(filter).exec();
+    if (!booking) return null;
+
+    const status = (booking as any).bookingStatus as string;
+    if (status === 'CANCELLED') return booking as unknown as Booking;
+
+    return this.bookingModel.findByIdAndUpdate(
+      bookingId,
+      {
+        bookingStatus: 'CANCELLED',
+        cancelledAt: new Date(),
+        $push: {
+          history: {
+            date: new Date(),
+            action: 'Booking cancelled by guest',
+            user: 'Guest',
+          },
+        },
+      },
+      { returnDocument: 'after' },
+    ).exec();
+  }
+
   async findAll(): Promise<Booking[]> {
     return this.bookingModel.find().populate('roomId').populate('userId').exec();
   }

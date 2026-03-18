@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, NotFoundException, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, NotFoundException, Query, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { BookingsService } from './bookings.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -47,6 +47,40 @@ export class BookingsController {
   @ApiResponse({ status: 200, description: 'Statistics retrieved successfully' })
   getStats() {
     return this.bookingsService.getStats();
+  }
+
+  @Get('my-bookings')
+  @ApiOperation({ summary: 'Get bookings for the current user' })
+  @ApiResponse({ status: 200, description: 'User bookings retrieved successfully' })
+  async getMyBookings(
+    @Request() req,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
+    const userId = req.user?._id;
+    const role = req.user?.role;
+    const parsedPage = page ? parseInt(page, 10) : 1;
+    const parsedLimit = limit ? parseInt(limit, 10) : 10;
+
+    // Admins see all bookings; regular users see only their own
+    if (!userId || userId === 'dev-admin-id' || role === 'ADMIN') {
+      return this.bookingsService.findAllPaginated({ page: parsedPage, limit: parsedLimit, status });
+    }
+    return this.bookingsService.findMyBookings(userId, { page: parsedPage, limit: parsedLimit, status });
+  }
+
+  @Post(':id/cancel')
+  @ApiOperation({ summary: 'Cancel a booking' })
+  @ApiResponse({ status: 200, description: 'Booking cancelled successfully' })
+  @ApiResponse({ status: 404, description: 'Booking not found' })
+  async cancelBooking(@Param('id', MongoObjectIdPipe) id: string, @Request() req) {
+    const userId = req.user?._id;
+    const booking = await this.bookingsService.cancelBooking(id, userId === 'dev-admin-id' ? undefined : userId);
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+    return booking;
   }
 
   @Get(':id')

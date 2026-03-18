@@ -55,6 +55,10 @@ export class Room {
   features: string[];
 
   @ApiProperty()
+  @Prop({ type: [String], default: [] })
+  customAmenities: string[];
+
+  @ApiProperty()
   @Prop({ type: [String] })
   featureKeys: string[];
 

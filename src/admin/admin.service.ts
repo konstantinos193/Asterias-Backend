@@ -48,17 +48,17 @@ export class AdminService {
       bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
     });
 
-    // Available rooms - calculate individual room availability
-    const allRooms = await this.roomModel.find({}, 'name totalRooms');
-    const totalRoomsCount = allRooms.reduce((sum, room) => sum + room.totalRooms, 0);
-    
-    // Currently occupied rooms - count actual occupied individual rooms
+    // Total physical rooms = 1 per document, regardless of available flag
+    // (available flag controls visibility on booking page, not physical inventory)
+    const totalRoomsCount = await this.roomModel.countDocuments({});
+
+    // Currently occupied rooms among the available ones
     const occupiedRooms = await this.bookingModel.countDocuments({
       checkIn: { $lte: today },
       checkOut: { $gte: today },
       bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
     });
-    
+
     const availableRooms = Math.max(0, totalRoomsCount - occupiedRooms);
     const occupancyRate = totalRoomsCount > 0 ? Math.round((occupiedRooms / totalRoomsCount) * 100) : 0;
 
