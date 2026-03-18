@@ -27,6 +27,10 @@ export class Room {
   price: number;
 
   @ApiProperty()
+  @Prop({ type: [{ guests: Number, price: Number }], default: [] })
+  pricingByOccupancy: { guests: number; price: number }[];
+
+  @ApiProperty()
   @Prop({ required: true, min: 1 })
   capacity: number;
 

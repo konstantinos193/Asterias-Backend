@@ -1,5 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNumber, IsOptional, IsEnum, IsArray, Min, Max } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsEnum, IsArray, IsObject, Min, Max, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+
+class OccupancyPriceDto {
+  @IsNumber()
+  @Min(1)
+  guests: number;
+
+  @IsNumber()
+  @Min(0)
+  price: number;
+}
 
 export class CreateRoomDto {
   @ApiProperty()
@@ -69,6 +80,13 @@ export class CreateRoomDto {
     roomService: boolean;
     safe: boolean;
   };
+
+  @ApiProperty()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OccupancyPriceDto)
+  @IsOptional()
+  pricingByOccupancy?: OccupancyPriceDto[];
 
   @ApiProperty()
   @IsNumber()

@@ -1,6 +1,6 @@
 {
   "name": "asterias-homes-backend",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Backend API for Asterias Homes hotel booking system",
   "main": "dist/main.js",
   "scripts": {
@@ -55,7 +55,7 @@
     "mongoose": "^9.3.1",
     "multer": "2.1.1",
     "node-cron": "^4.2.1",
-    "nodemailer": "^8.0.2",
+    "nodemailer": "^8.0.3",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
