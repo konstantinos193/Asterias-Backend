@@ -1,9 +1,9 @@
 # Asterias Homes - Backend API
 
-![NestJS](https://img.shields.io/badge/NestJS-11.1.16-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)
+![NestJS](https://img.shields.io/badge/NestJS-11.1.17-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)
 ![MongoDB](https://img.shields.io/badge/MongoDB-7.1.0-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=node.js&logoColor=white)
-![Mongoose](https://img.shields.io/badge/Mongoose-9.2.4-880000?style=for-the-badge&logo=mongoose)
+![Mongoose](https://img.shields.io/badge/Mongoose-9.3.1-880000?style=for-the-badge&logo=mongoose)
 ![JWT](https://img.shields.io/badge/JWT-9.0.3-000000?style=for-the-badge&logo=jsonwebtokens)
 ![Stripe](https://img.shields.io/badge/Stripe-20.4.1-635BFF?style=for-the-badge&logo=stripe&logoColor=white)
 
@@ -14,15 +14,19 @@ Backend API for Asterias Homes hotel booking system. Because even hotels need to
 - **Runtime**: Node.js 18+
 - **Framework**: NestJS
 - **Database**: MongoDB with Mongoose
-- **Authentication**: JWT
+- **Authentication**: JWT + Passport (passport-jwt, passport-local)
 - **Payment**: Stripe API
 - **Email**: Nodemailer with Gmail SMTP
-- **Validation**: class-validator
+- **Validation**: class-validator, class-transformer
 - **Security**: Helmet, CORS, Throttling
-- **File Upload**: Multer
-- **Scheduling**: @nestjs/schedule
+- **File Upload**: Multer with Sharp for image processing
+- **Scheduling**: @nestjs/schedule with node-cron
 - **Image Storage**: Cloudinary
 - **XML**: xml2js, xmlbuilder
+- **PDF Generation**: Puppeteer
+- **API Documentation**: Swagger (@nestjs/swagger)
+- **HTTP Client**: Axios
+- **Date Handling**: Moment.js
 
 ## Requirements
 
@@ -110,10 +114,18 @@ This starts the server with automatic restarts for development.
 
 ### Production Mode
 ```bash
-npm start
+npm run build:prod
+npm run start:prod
 ```
-This runs the server in production mode.
+Build first, then run. The `start:prod` command runs the compiled output directly.
 # Pray it doesn't explode. We're not responsible.
+
+### Build Options
+```bash
+npm run build         # Standard build (2GB memory limit)
+npm run build:prod    # Production build (2GB memory limit)
+npm run build:render  # Memory-constrained build for Render.com (1GB limit)
+```
 
 ### Seed Database (Optional)
 ```bash
