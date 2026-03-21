@@ -249,33 +249,41 @@ export class AdminController {
   }
 
   @Post('rooms')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @RequireAdmin()
   async createRoom(@Body() body: any) {
     try {
       return await this.adminService.createRoom(body);
     } catch (error) {
-      throw new HttpException(
-        'Failed to create room',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      if (error.name === 'ValidationError') {
+        const messages = Object.values(error.errors).map((err: any) => err.message);
+        throw new HttpException(messages.join(', '), HttpStatus.BAD_REQUEST);
+      }
+      if (error.message) {
+        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+      }
+      throw new HttpException('Failed to create room', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
   @Put('rooms/:id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @RequireAdmin()
   async updateRoom(@Param('id', MongoObjectIdPipe) id: string, @Body() body: any) {
-    console.log('🔧 AdminController.updateRoom called:', { id, bodyKeys: Object.keys(body), hasImages: !!body.images, imagesCount: body.images?.length });
     try {
-      const result = await this.adminService.updateRoom(id, body);
-      console.log('🔧 AdminController.updateRoom result:', { success: true, hasImages: !!result.images, imagesCount: result.images?.length });
-      return result;
+      return await this.adminService.updateRoom(id, body);
     } catch (error) {
-      console.log('🔧 AdminController.updateRoom error:', error.message);
       if (error.message === 'Room not found') {
         throw new HttpException(error.message, HttpStatus.NOT_FOUND);
       }
-      throw new HttpException(
-        'Failed to update room',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      if (error.name === 'ValidationError') {
+        const messages = Object.values(error.errors).map((err: any) => err.message);
+        throw new HttpException(messages.join(', '), HttpStatus.BAD_REQUEST);
+      }
+      if (error.message) {
+        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+      }
+      throw new HttpException('Failed to update room', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 

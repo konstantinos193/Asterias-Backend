@@ -682,16 +682,12 @@ export class AdminService {
   }
 
   async updateRoom(id: string, roomData: any) {
-    console.log('🔧 Backend updateRoom called:', { id, roomData });
-    
     const room = await this.roomModel.findByIdAndUpdate(
       id,
-      roomData,
-      { returnDocument: 'after', runValidators: true }
+      { $set: roomData },
+      { new: true, runValidators: true }
     );
-    
-    console.log('🔧 Backend updateRoom result:', { room: room?.toObject() });
-    
+
     if (!room) {
       throw new Error('Room not found');
     }

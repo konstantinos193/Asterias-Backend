@@ -91,6 +91,10 @@ export class Room {
   totalRooms: number;
 
   @ApiProperty()
+  @Prop({ default: true })
+  available: boolean;
+
+  @ApiProperty()
   @Prop({ default: null })
   image: string;
 
@@ -107,7 +111,7 @@ export class Room {
   reviewCount: number;
 
   @ApiProperty()
-  @Prop({ default: null, sparse: true })
+  @Prop({ sparse: true })
   bookingcom_room_id: string;
 
   @ApiProperty()
