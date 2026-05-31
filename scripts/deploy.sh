@@ -21,7 +21,8 @@ fi
 log "=== Deploy: $CURRENT → $NEXT (port $NEXT_PORT) ==="
 
 log "Pulling latest code..."
-git pull origin main
+git fetch origin
+git reset --hard origin/main
 
 log "Building image $IMAGE_NAME:$NEXT..."
 docker build -t "$IMAGE_NAME:$NEXT" .
