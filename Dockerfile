@@ -1,7 +1,8 @@
 FROM node:20-slim AS builder
 WORKDIR /app
 
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_SKIP_DOWNLOAD=true
 
 RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
