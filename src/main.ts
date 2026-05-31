@@ -3,8 +3,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import express from 'express';
 import { join } from 'path';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -14,7 +14,7 @@ import { MemoryMonitorService } from './utils/memory-monitor.service';
 import { KeepAliveService } from './keep-alive/keep-alive.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   // Security middleware
   app.use(helmet());
@@ -33,7 +33,7 @@ async function bootstrap() {
   });
 
   // Serve static assets from public/ (logo, landing.js, review photos, etc.)
-  expressApp.use(express.static(join(process.cwd(), 'public')));
+  app.useStaticAssets(join(process.cwd(), 'public'));
 
   // CORS configuration
   app.enableCors({
