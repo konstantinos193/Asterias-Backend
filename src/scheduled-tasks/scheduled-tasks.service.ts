@@ -5,8 +5,6 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Booking } from '../models/booking.model';
 import { Room } from '../models/room.model';
-import { ChannelManagerService } from '../channel-manager/channel-manager.service';
-
 @Injectable()
 export class ScheduledTasksService {
   private readonly logger = new Logger(ScheduledTasksService.name);
@@ -15,7 +13,6 @@ export class ScheduledTasksService {
   constructor(
     private readonly emailService: EmailService,
     private readonly schedulerRegistry: SchedulerRegistry,
-    private readonly channelManagerService: ChannelManagerService,
     @InjectModel(Booking.name) private bookingModel: Model<Booking>,
     @InjectModel(Room.name) private roomModel: Model<Room>,
   ) {}
@@ -44,18 +41,6 @@ export class ScheduledTasksService {
     this.tasksRunning = false;
     this.logger.log('🛑 Stopping scheduled tasks...');
     this.logger.log('✅ All scheduled tasks stopped');
-  }
-
-  @Cron(CronExpression.EVERY_HOUR)
-  async handleIcalSync(): Promise<void> {
-    if (!this.tasksRunning) return;
-    this.logger.log('🔄 Running iCal channel sync...');
-    try {
-      const result = await this.channelManagerService.syncAll();
-      this.logger.log(`iCal sync done — ${result.synced} channels OK, ${result.errors} errors | +${result.totalImported} new, ~${result.totalUpdated} updated, -${result.totalCancelled} cancelled`);
-    } catch (error) {
-      this.logger.error('iCal sync failed:', error);
-    }
   }
 
   @Cron(CronExpression.EVERY_HOUR)
