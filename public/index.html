@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asterias Homes — API</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Alegreya+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #8B4B5C;
+      --primary-dark: #7a3f4e;
+      --secondary: #E8E2D5;
+      --accent: #A67B5B;
+      --text: #1e1e1e;
+      --text-muted: #6b6464;
+      --border: rgba(139, 75, 92, 0.14);
+      --white: #ffffff;
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Alegreya Sans', system-ui, sans-serif;
+      background-color: var(--secondary);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--white);
+      border-bottom: 1px solid var(--border);
+      padding: 1.25rem 2.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    header img {
+      height: 44px;
+      width: auto;
+    }
+
+    .api-badge {
+      background: var(--primary);
+      color: var(--white);
+      font-family: 'Alegreya Sans', sans-serif;
+      font-size: 0.6rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 0.25rem 0.55rem;
+      border-radius: 2px;
+      margin-top: 2px;
+    }
+
+    header nav {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    header nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 400;
+      transition: color 0.15s;
+    }
+
+    header nav a:hover { color: var(--primary); }
+
+    header nav .nav-cta {
+      background: var(--primary);
+      color: var(--white);
+      padding: 0.45rem 1.1rem;
+      border-radius: 3px;
+      font-size: 0.85rem;
+      transition: background 0.15s;
+    }
+
+    header nav .nav-cta:hover { background: var(--primary-dark); color: var(--white); }
+
+    /* ── Main ── */
+    main {
+      flex: 1;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 5rem 2rem 4rem;
+      width: 100%;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      text-align: center;
+      margin-bottom: 3.5rem;
+    }
+
+    .hero-label {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 1rem;
+    }
+
+    .hero h1 {
+      font-family: 'Cormorant', Georgia, serif;
+      font-size: clamp(2.6rem, 5vw, 4rem);
+      font-weight: 300;
+      color: var(--primary);
+      line-height: 1.15;
+      margin-bottom: 1.25rem;
+      letter-spacing: -0.01em;
+    }
+
+    .hero h1 em {
+      font-style: italic;
+      font-weight: 400;
+    }
+
+    .hero p {
+      font-size: 1.05rem;
+      color: var(--text-muted);
+      font-weight: 300;
+      max-width: 500px;
+      margin: 0 auto;
+      line-height: 1.75;
+    }
+
+    /* ── Status bar ── */
+    .status-bar {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.9rem 1.4rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 3rem;
+      font-size: 0.84rem;
+      flex-wrap: wrap;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #4caf50;
+      flex-shrink: 0;
+      animation: blink 2.4s ease-in-out infinite;
+    }
+
+    .status-dot.error { background: #e53935; animation: none; }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+
+    .status-bar .label { color: var(--text-muted); }
+    .status-bar .value { color: var(--text); font-weight: 500; }
+    .status-bar .pipe {
+      color: var(--border);
+      border-left: 1px solid currentColor;
+      height: 14px;
+      margin: 0 0.1rem;
+    }
+    .status-bar .spacer { margin-left: auto; }
+    .status-bar .uptime-label {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* ── Section title ── */
+    .section-title {
+      font-family: 'Cormorant', Georgia, serif;
+      font-size: 1.35rem;
+      font-weight: 400;
+      color: var(--text);
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.6rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* ── Endpoint grid ── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(275px, 1fr));
+      gap: 1rem;
+      margin-bottom: 3.5rem;
+    }
+
+    .card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.4rem;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+      transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s;
+    }
+
+    .card:hover {
+      border-color: var(--primary);
+      box-shadow: 0 4px 18px rgba(139, 75, 92, 0.1);
+      transform: translateY(-2px);
+    }
+
+    .card-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.6rem;
+    }
+
+    .method {
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      background: rgba(166, 123, 91, 0.12);
+      color: var(--accent);
+      padding: 0.15rem 0.45rem;
+      border-radius: 2px;
+    }
+
+    .method.docs {
+      background: rgba(139, 75, 92, 0.1);
+      color: var(--primary);
+    }
+
+    .card .path {
+      font-family: 'Courier New', 'Lucida Console', monospace;
+      font-size: 0.8rem;
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .card .desc {
+      font-size: 0.84rem;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    /* ── Actions ── */
+    .actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 4rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.75rem 2rem;
+      border-radius: 3px;
+      font-family: 'Alegreya Sans', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      text-decoration: none;
+      transition: all 0.18s;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .btn-primary:hover { background: var(--primary-dark); }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--primary);
+      border: 1px solid var(--primary);
+    }
+
+    .btn-outline:hover { background: rgba(139, 75, 92, 0.06); }
+
+    /* ── Divider ── */
+    .divider {
+      width: 48px;
+      height: 1px;
+      background: var(--accent);
+      margin: 0 auto 3rem;
+      opacity: 0.45;
+    }
+
+    /* ── Footer ── */
+    footer {
+      background: var(--white);
+      border-top: 1px solid var(--border);
+      padding: 1.75rem 2.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    footer a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    footer a:hover { text-decoration: underline; }
+
+    footer .footer-links {
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 600px) {
+      header { padding: 1rem 1.25rem; }
+      header nav { display: none; }
+      main { padding: 3rem 1.25rem 3rem; }
+      footer { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <img src="/asterias-logo.avif" alt="Asterias Homes" onerror="this.style.display='none'">
+    <span class="api-badge">API</span>
+    <nav>
+      <a href="/health">Health</a>
+      <a href="/health/database">Database</a>
+      <a href="/api/docs" class="nav-cta">API Docs</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <span class="hero-label">Fiskardo · Kefalonia</span>
+      <h1>Asterias Homes<br><em>Backend API</em></h1>
+      <p>Powering the booking experience for Asterias Homes — rooms, availability, payments, and guest communications.</p>
+    </div>
+
+    <div class="status-bar" id="status-bar">
+      <span class="status-dot" id="status-dot"></span>
+      <span class="label">Status</span>
+      <span class="value" id="status-value">Checking&hellip;</span>
+      <span class="pipe"></span>
+      <span class="label">Version</span>
+      <span class="value" id="version-value">&mdash;</span>
+      <span class="pipe"></span>
+      <span class="label">Env</span>
+      <span class="value" id="env-value">&mdash;</span>
+      <span class="spacer"></span>
+      <span class="uptime-label" id="uptime-value"></span>
+    </div>
+
+    <p class="section-title">Endpoints</p>
+
+    <div class="grid">
+      <a class="card" href="/api/docs">
+        <div class="card-meta">
+          <span class="method docs">Swagger</span>
+          <span class="path">/api/docs</span>
+        </div>
+        <p class="desc">Interactive API documentation with full request and response schemas.</p>
+      </a>
+
+      <a class="card" href="/health">
+        <div class="card-meta">
+          <span class="method">GET</span>
+          <span class="path">/health</span>
+        </div>
+        <p class="desc">Server health — uptime, memory usage, version, and environment.</p>
+      </a>
+
+      <a class="card" href="/health/database">
+        <div class="card-meta">
+          <span class="method">GET</span>
+          <span class="path">/health/database</span>
+        </div>
+        <p class="desc">MongoDB connection status and readyState diagnostics.</p>
+      </a>
+
+      <a class="card" href="/health/stripe">
+        <div class="card-meta">
+          <span class="method">GET</span>
+          <span class="path">/health/stripe</span>
+        </div>
+        <p class="desc">Stripe connectivity check with live/test mode indicator.</p>
+      </a>
+
+      <a class="card" href="/api/rooms">
+        <div class="card-meta">
+          <span class="method">GET</span>
+          <span class="path">/api/rooms</span>
+        </div>
+        <p class="desc">Room listings with descriptions, amenities, and pricing.</p>
+      </a>
+
+      <a class="card" href="/api/availability">
+        <div class="card-meta">
+          <span class="method">GET</span>
+          <span class="path">/api/availability</span>
+        </div>
+        <p class="desc">Real-time availability calendar across all rooms.</p>
+      </a>
+
+      <a class="card" href="/api/offers">
+        <div class="card-meta">
+          <span class="method">GET</span>
+          <span class="path">/api/offers</span>
+        </div>
+        <p class="desc">Active promotions and seasonal offers.</p>
+      </a>
+
+      <a class="card" href="/api/auth">
+        <div class="card-meta">
+          <span class="method">POST</span>
+          <span class="path">/api/auth</span>
+        </div>
+        <p class="desc">Authentication — login, registration, and token management.</p>
+      </a>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="actions">
+      <a class="btn btn-primary" href="/api/docs">Explore API Docs</a>
+      <a class="btn btn-outline" href="/health">Health Check</a>
+    </div>
+  </main>
+
+  <footer>
+    <span>&copy; 2025 Asterias Homes &mdash; Fiskardo, Kefalonia</span>
+    <div class="footer-links">
+      <a href="https://asteriashome.gr">asteriashome.gr</a>
+      <a href="/api/docs">API Docs</a>
+      <a href="/health">Health</a>
+    </div>
+  </footer>
+
+  <script src="/landing.js"></script>
+</body>
+</html>

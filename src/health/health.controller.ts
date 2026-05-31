@@ -1,7 +1,9 @@
-import { Controller, Get, Inject } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import Stripe from 'stripe';
+import { Response } from 'express';
+import { join } from 'path';
 
 const STRIPE_CACHE_TTL_MS = 60_000;
 
@@ -85,22 +87,7 @@ export class HealthController {
   }
 
   @Get()
-  getRoot() {
-    return {
-      message: 'Welcome to Asterias Homes API',
-      version: '1.0.0',
-      endpoints: {
-        auth: '/api/auth',
-        rooms: '/api/rooms',
-        bookings: '/api/bookings',
-        offers: '/api/offers',
-        contact: '/api/contact',
-        admin: '/api/admin',
-        payments: '/api/payments',
-        availability: '/api/availability',
-        docs: '/api/docs',
-        health: '/health'
-      }
-    };
+  getRoot(@Res() res: Response) {
+    res.sendFile(join(process.cwd(), 'public', 'index.html'));
   }
 }

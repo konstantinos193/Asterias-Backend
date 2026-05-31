@@ -3,6 +3,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import express from 'express';
+import { join } from 'path';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -29,6 +31,9 @@ async function bootstrap() {
   expressApp.get('/favicon.ico', (req: any, res: any) => {
     res.status(204).end();
   });
+
+  // Serve static assets from public/ (logo, landing.js, review photos, etc.)
+  expressApp.use(express.static(join(process.cwd(), 'public')));
 
   // CORS configuration
   app.enableCors({
