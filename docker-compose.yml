@@ -1,0 +1,22 @@
+version: '3.9'
+
+services:
+  backend-blue:
+    image: asterias-backend:blue
+    container_name: asterias-blue
+    restart: unless-stopped
+    env_file: .env.production
+    ports:
+      - "127.0.0.1:5010:5000"
+    profiles:
+      - blue
+
+  backend-green:
+    image: asterias-backend:green
+    container_name: asterias-green
+    restart: unless-stopped
+    env_file: .env.production
+    ports:
+      - "127.0.0.1:5011:5000"
+    profiles:
+      - green
