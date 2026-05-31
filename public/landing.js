@@ -1,4 +1,7 @@
 (function () {
+  var yearEl = document.getElementById('year');
+  if (yearEl) yearEl.textContent = new Date().getFullYear();
+
   var statusDot = document.getElementById('status-dot');
   var statusValue = document.getElementById('status-value');
   var versionValue = document.getElementById('version-value');
