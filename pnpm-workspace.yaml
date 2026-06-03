@@ -1,8 +1,0 @@
-allowBuilds:
-  '@nestjs/core': false
-  '@scarf/scarf': false
-  puppeteer: false
-  sharp: false
-  unrs-resolver: false
-minimumReleaseAgeExclude:
-  - axios@1.17.0
