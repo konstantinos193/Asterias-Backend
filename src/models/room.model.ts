@@ -165,6 +165,10 @@ export class Room {
   @ApiProperty()
   @Prop({ enum: ['asterias', 'bookingcom'], default: 'asterias' })
   source: 'asterias' | 'bookingcom';
+
+  @ApiProperty()
+  @Prop({ default: 999, min: 0 })
+  sortOrder: number;
 }
 
 export const RoomSchema = SchemaFactory.createForClass(Room);

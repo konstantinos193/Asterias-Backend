@@ -19,7 +19,7 @@ export class RoomsService {
   }
 
   async findAll(): Promise<Room[]> {
-    return this.roomModel.find().exec();
+    return this.roomModel.find().sort({ sortOrder: 1 }).exec();
   }
 
   async findOne(id: string): Promise<Room | null> {

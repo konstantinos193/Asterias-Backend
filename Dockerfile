@@ -12,7 +12,7 @@ COPY package.json pnpm-lock.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN node --max-old-space-size=1024 node_modules/@nestjs/cli/bin/nest.js build
+RUN pnpm build
 
 
 FROM node:20-slim AS production
