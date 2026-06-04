@@ -1,8 +1,9 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Booking } from '../models/booking.model';
 import { Room } from '../models/room.model';
+import { RoomBlockedDate, RoomBlockedDateDocument } from '../models/room-blocked-date.model';
 import { Contact } from '../models/contact.model';
 import { User, UserDocument } from '../models/user.model';
 import { OffersService } from '../offers/offers.service';
@@ -16,6 +17,7 @@ export class AdminService {
   constructor(
     @InjectModel('Booking') private bookingModel: Model<Booking>,
     @InjectModel('Room') private roomModel: Model<Room>,
+    @InjectModel(RoomBlockedDate.name) private roomBlockedDateModel: Model<RoomBlockedDateDocument>,
     @InjectModel('Contact') private contactModel: Model<Contact>,
     @InjectModel('User') private userModel: Model<UserDocument>,
     private offersService: OffersService,
@@ -36,57 +38,51 @@ export class AdminService {
     const startOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate());
     const endOfYesterday = new Date(startOfYesterday.getTime() + 24 * 60 * 60 * 1000);
 
-    // All 12 queries are independent — run in parallel
-    const [
-      todayArrivalsCount,
-      todayDeparturesCount,
-      yesterdayArrivals,
-      totalRoomsCount,
-      occupiedRooms,
-      yesterdayOccupiedRooms,
-      todayGuests,
-      yesterdayGuests,
-      recentBookings,
-      todayArrivals,
-      monthlyRevenue,
-      unreadContacts,
-    ] = await Promise.all([
-      this.bookingModel.countDocuments({
-        checkIn: { $gte: startOfDay, $lt: endOfDay },
-        bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
-      }),
-      this.bookingModel.countDocuments({
-        checkOut: { $gte: startOfDay, $lt: endOfDay },
-        bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN', 'CHECKED_OUT'] },
-      }),
-      this.bookingModel.countDocuments({
-        checkIn: { $gte: startOfYesterday, $lt: endOfYesterday },
-        bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
-      }),
+    // 5 parallel queries instead of 12: booking stats collapsed into one $facet aggregation
+    const [bookingFacets, totalRoomsCount, recentBookings, todayArrivals, unreadContacts] = await Promise.all([
+      this.bookingModel.aggregate([
+        { $facet: {
+          todayArrivalsCount: [
+            { $match: { checkIn: { $gte: startOfDay, $lt: endOfDay }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
+            { $count: 'n' },
+          ],
+          todayDeparturesCount: [
+            { $match: { checkOut: { $gte: startOfDay, $lt: endOfDay }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN', 'CHECKED_OUT'] } } },
+            { $count: 'n' },
+          ],
+          yesterdayArrivals: [
+            { $match: { checkIn: { $gte: startOfYesterday, $lt: endOfYesterday }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
+            { $count: 'n' },
+          ],
+          occupiedRooms: [
+            { $match: { checkIn: { $lte: today }, checkOut: { $gte: today }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
+            { $count: 'n' },
+          ],
+          yesterdayOccupiedRooms: [
+            { $match: { checkIn: { $lte: yesterday }, checkOut: { $gte: yesterday }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
+            { $count: 'n' },
+          ],
+          todayGuests: [
+            { $match: { checkIn: { $gte: startOfDay, $lt: endOfDay }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
+            { $group: { _id: null, total: { $sum: { $add: ['$adults', '$children'] } } } },
+          ],
+          yesterdayGuests: [
+            { $match: { checkIn: { $gte: startOfYesterday, $lt: endOfYesterday }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
+            { $group: { _id: null, total: { $sum: { $add: ['$adults', '$children'] } } } },
+          ],
+          monthlyRevenue: [
+            { $match: { createdAt: { $gte: startOfMonth, $lte: endOfMonth }, paymentStatus: 'PAID' } },
+            { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+          ],
+        }},
+      ]).option({ maxTimeMS: 5000 }),
       this.roomModel.countDocuments({}),
-      this.bookingModel.countDocuments({
-        checkIn: { $lte: today },
-        checkOut: { $gte: today },
-        bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
-      }),
-      this.bookingModel.countDocuments({
-        checkIn: { $lte: yesterday },
-        checkOut: { $gte: yesterday },
-        bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
-      }),
-      this.bookingModel.aggregate([
-        { $match: { checkIn: { $gte: startOfDay, $lt: endOfDay }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
-        { $group: { _id: null, total: { $sum: { $add: ['$adults', '$children'] } } } },
-      ]),
-      this.bookingModel.aggregate([
-        { $match: { checkIn: { $gte: startOfYesterday, $lt: endOfYesterday }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
-        { $group: { _id: null, total: { $sum: { $add: ['$adults', '$children'] } } } },
-      ]),
       this.bookingModel.find()
         .populate('roomId', 'name')
         .populate('userId', 'name email')
         .sort({ createdAt: -1 })
-        .limit(5),
+        .limit(5)
+        .lean(),
       this.bookingModel.find({
         checkIn: { $gte: startOfDay, $lt: endOfDay },
         bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
@@ -94,19 +90,24 @@ export class AdminService {
         .populate('roomId', 'name')
         .populate('userId', 'name email')
         .sort({ checkIn: 1 })
-        .limit(10),
-      this.bookingModel.aggregate([
-        { $match: { createdAt: { $gte: startOfMonth, $lte: endOfMonth }, paymentStatus: 'PAID' } },
-        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
-      ]),
+        .limit(10)
+        .lean(),
       this.contactModel.countDocuments({ status: 'UNREAD' }),
     ]);
+
+    const f = bookingFacets[0];
+    const todayArrivalsCount     = f.todayArrivalsCount[0]?.n ?? 0;
+    const todayDeparturesCount   = f.todayDeparturesCount[0]?.n ?? 0;
+    const yesterdayArrivals      = f.yesterdayArrivals[0]?.n ?? 0;
+    const occupiedRooms          = f.occupiedRooms[0]?.n ?? 0;
+    const yesterdayOccupiedRooms = f.yesterdayOccupiedRooms[0]?.n ?? 0;
+    const todayGuestsCount       = f.todayGuests[0]?.total ?? 0;
+    const yesterdayGuestsCount   = f.yesterdayGuests[0]?.total ?? 0;
+    const monthlyRevenueTotal    = f.monthlyRevenue[0]?.total ?? 0;
 
     const availableRooms = Math.max(0, totalRoomsCount - occupiedRooms);
     const occupancyRate = totalRoomsCount > 0 ? Math.round((occupiedRooms / totalRoomsCount) * 100) : 0;
     const yesterdayOccupancyRate = totalRoomsCount > 0 ? Math.round((yesterdayOccupiedRooms / totalRoomsCount) * 100) : 0;
-    const todayGuestsCount = todayGuests[0]?.total || 0;
-    const yesterdayGuestsCount = yesterdayGuests[0]?.total || 0;
 
     const calculateChange = (current, previous) => {
       if (previous === 0) {
@@ -122,6 +123,7 @@ export class AdminService {
     const arrivalsChange = calculateChange(todayArrivalsCount, yesterdayArrivals);
     const guestsChange = calculateChange(todayGuestsCount, yesterdayGuestsCount);
     const occupancyChange = calculateChange(occupancyRate, yesterdayOccupancyRate);
+
     const availabilityPercentage = totalRoomsCount > 0 ? Math.round((availableRooms / totalRoomsCount) * 100) : 0;
     const yesterdayAvailableRooms = totalRoomsCount - yesterdayOccupiedRooms;
     const yesterdayAvailabilityPercentage = totalRoomsCount > 0 ? Math.round((yesterdayAvailableRooms / totalRoomsCount) * 100) : 0;
@@ -137,7 +139,7 @@ export class AdminService {
       recentBookings,
       todayArrivals,
       todayDeparturesCount,
-      monthlyRevenue: monthlyRevenue[0]?.total || 0,
+      monthlyRevenue: monthlyRevenueTotal,
       unreadContacts,
     };
   }
@@ -195,7 +197,7 @@ export class AdminService {
             }
           }
         }
-      ]);
+      ]).option({ maxTimeMS: 5000 });
 
       // Ensure we have valid data even if no bookings found
       const safeStats = bookingStats && bookingStats.length > 0 ? bookingStats[0] : null;
@@ -266,7 +268,7 @@ export class AdminService {
           }
         },
         { $sort: { '_id.year': 1, '_id.month': 1 } }
-      ]);
+      ]).option({ maxTimeMS: 5000 });
 
       // Ensure we have valid data even if no bookings found
       const safeMonthlyRevenue = monthlyRevenue || [];
@@ -309,7 +311,10 @@ export class AdminService {
     if (paymentStatus) filter.paymentStatus = paymentStatus;
     if (checkIn) filter.checkIn = { $gte: new Date(checkIn) };
     if (checkOut) filter.checkOut = { $lte: new Date(checkOut) };
-    if (guestEmail) filter['guestInfo.email'] = { $regex: guestEmail, $options: 'i' };
+    if (guestEmail) {
+      const escaped = guestEmail.toLowerCase().trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter['guestInfo.email'] = { $regex: `^${escaped}` };
+    }
 
     // Build sort
     const sort: any = {};
@@ -323,7 +328,8 @@ export class AdminService {
       .populate('userId', 'name email')
       .sort(sort)
       .skip(skip)
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .lean();
 
     const total = await this.bookingModel.countDocuments(filter);
 
@@ -344,7 +350,7 @@ export class AdminService {
       .populate('userId', 'name email');
     
     if (!booking) {
-      throw new Error('Booking not found');
+      throw new NotFoundException('Booking not found');
     }
     
     return booking;
@@ -353,16 +359,16 @@ export class AdminService {
   async cancelBooking(bookingId: string, body: any) {
     const booking = await this.bookingModel.findById(bookingId);
     if (!booking) {
-      throw new Error('Booking not found');
+      throw new NotFoundException('Booking not found');
     }
 
     // Check if booking can be cancelled
     if (booking.bookingStatus === 'CANCELLED') {
-      throw new Error('Booking is already cancelled');
+      throw new BadRequestException('Booking is already cancelled');
     }
 
     if (booking.bookingStatus === 'CHECKED_OUT') {
-      throw new Error('Cannot cancel a completed booking');
+      throw new BadRequestException('Cannot cancel a completed booking');
     }
 
     let actualRefundAmount = body.refundAmount || 0;
@@ -446,13 +452,13 @@ export class AdminService {
   async updateBookingStatus(bookingId: string, body: { status: 'PENDING' | 'CONFIRMED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'CANCELLED'; adminNotes?: string }) {
     const booking = await this.bookingModel.findById(bookingId);
     if (!booking) {
-      throw new Error('Booking not found');
+      throw new NotFoundException('Booking not found');
     }
 
     // Validate status transition
     const validStatuses = ['PENDING', 'CONFIRMED', 'CHECKED_IN', 'CHECKED_OUT', 'CANCELLED'];
     if (!validStatuses.includes(body.status)) {
-      throw new Error('Invalid status');
+      throw new BadRequestException('Invalid status');
     }
 
     // Prepare update data
@@ -497,7 +503,7 @@ export class AdminService {
   }) {
     const booking = await this.bookingModel.findById(bookingId);
     if (!booking) {
-      throw new Error('Booking not found');
+      throw new NotFoundException('Booking not found');
     }
 
     const updateData: any = {};
@@ -531,13 +537,13 @@ export class AdminService {
 
   async bulkDeleteBookings(bookingIds: string[]) {
     if (!bookingIds || bookingIds.length === 0) {
-      throw new Error('No booking IDs provided');
+      throw new BadRequestException('No booking IDs provided');
     }
     
     const result = await this.bookingModel.deleteMany({ _id: { $in: bookingIds } });
     
     if (result.deletedCount === 0) {
-      throw new Error('No bookings found with the provided IDs');
+      throw new NotFoundException('No bookings found with the provided IDs');
     }
     
     return {
@@ -548,7 +554,7 @@ export class AdminService {
 
   async bulkUpdateBookingStatus(body: { bookingIds: string[]; status: 'PENDING' | 'CONFIRMED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'CANCELLED'; adminNotes?: string }) {
     if (!body.bookingIds || body.bookingIds.length === 0) {
-      throw new Error('No booking IDs provided');
+      throw new BadRequestException('No booking IDs provided');
     }
     
     const result = await this.bookingModel.updateMany(
@@ -562,7 +568,7 @@ export class AdminService {
     );
     
     if (result.modifiedCount === 0) {
-      throw new Error('No bookings found with the provided IDs');
+      throw new NotFoundException('No bookings found with the provided IDs');
     }
     
     return {
@@ -589,12 +595,10 @@ export class AdminService {
     // Pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const rooms = await this.roomModel.find(filter)
-      .sort(sort)
-      .skip(skip)
-      .limit(parseInt(limit));
-
-    const total = await this.roomModel.countDocuments(filter);
+    const [rooms, total] = await Promise.all([
+      this.roomModel.find(filter).sort(sort).skip(skip).limit(parseInt(limit)).lean(),
+      this.roomModel.countDocuments(filter),
+    ]);
 
     return {
       rooms,
@@ -608,10 +612,10 @@ export class AdminService {
   }
 
   async getRoomById(id: string) {
-    const room = await this.roomModel.findById(id);
-    
+    const room = await this.roomModel.findById(id).lean();
+
     if (!room) {
-      throw new Error('Room not found');
+      throw new NotFoundException('Room not found');
     }
 
     return { room };
@@ -632,7 +636,7 @@ export class AdminService {
     );
 
     if (!room) {
-      throw new Error('Room not found');
+      throw new NotFoundException('Room not found');
     }
 
     return room;
@@ -642,7 +646,7 @@ export class AdminService {
     const room = await this.roomModel.findByIdAndDelete(id);
     
     if (!room) {
-      throw new Error('Room not found');
+      throw new NotFoundException('Room not found');
     }
 
     return {
@@ -719,11 +723,7 @@ export class AdminService {
     }
 
     if (search) {
-      filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { username: { $regex: search, $options: 'i' } }
-      ];
+      filter.$text = { $search: search };
     }
 
     const skip = (page - 1) * limit;
@@ -771,8 +771,8 @@ export class AdminService {
       {
         $sort: { capacity: 1 }
       }
-    ]);
-    
+    ]).option({ maxTimeMS: 5000 });
+
     return roomTypes.map(type => ({
       id: type._id,
       name: type.name,
@@ -790,7 +790,7 @@ export class AdminService {
   async getRoomAvailability(roomId: string, startDate: string, endDate: string) {
     const room = await this.roomModel.findById(roomId);
     if (!room) {
-      throw new Error('Room not found');
+      throw new NotFoundException('Room not found');
     }
     
     const bookings = await this.bookingModel.find({
@@ -799,7 +799,7 @@ export class AdminService {
       $or: [
         { checkIn: { $lte: new Date(endDate) }, checkOut: { $gte: new Date(startDate) } },
       ]
-    }).sort({ checkIn: 1 });
+    }).sort({ checkIn: 1 }).lean();
     
     // Generate availability calendar
     const availability = [];
@@ -831,7 +831,7 @@ export class AdminService {
   async updateRoomAvailability(roomId: string, available: boolean) {
     const room = await this.roomModel.findById(roomId);
     if (!room) {
-      throw new Error('Room not found');
+      throw new NotFoundException('Room not found');
     }
     
     room.available = available;
@@ -849,7 +849,7 @@ export class AdminService {
   }) {
     const room = await this.roomModel.findById(roomId);
     if (!room) {
-      throw new Error('Room not found');
+      throw new NotFoundException('Room not found');
     }
     
     room.price = pricingData.basePrice;
@@ -887,25 +887,21 @@ export class AdminService {
   }
 
   async blockRoomDates(roomId: string, startDate: string, endDate: string, reason?: string) {
-    const room = await this.roomModel.findById(roomId);
-    if (!room) throw new Error('Room not found');
-    const blockId = Date.now().toString();
-    (room as any).blockedDates = [
-      ...((room as any).blockedDates || []),
-      { _id: blockId, startDate: new Date(startDate), endDate: new Date(endDate), reason: reason || '' }
-    ];
-    const saved = await room.save();
-    return { success: true, data: saved };
+    const rid = new Types.ObjectId(roomId);
+    const room = await this.roomModel.findById(rid).lean();
+    if (!room) throw new NotFoundException('Room not found');
+    const entry = await this.roomBlockedDateModel.create({
+      roomId: rid,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      reason: reason || '',
+    });
+    return { success: true, data: { ...room, blockedDate: entry } };
   }
 
   async unblockRoomDates(roomId: string, blockId: string) {
-    const room = await this.roomModel.findById(roomId);
-    if (!room) throw new Error('Room not found');
-    (room as any).blockedDates = ((room as any).blockedDates || []).filter(
-      (b: any) => b._id !== blockId
-    );
-    const saved = await room.save();
-    return { success: true, data: saved };
+    await this.roomBlockedDateModel.findByIdAndDelete(blockId);
+    return { success: true };
   }
 
   async getSettings() {

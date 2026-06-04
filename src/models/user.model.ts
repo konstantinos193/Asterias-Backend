@@ -118,6 +118,9 @@ UserSchema.statics.createAdmin = async function(adminData: Partial<User>) {
 
 // Index for better query performance
 UserSchema.index({ role: 1 });
+UserSchema.index({ role: 1, isActive: 1 });
+UserSchema.index({ isActive: 1, createdAt: -1 });
+UserSchema.index({ name: 'text', email: 'text', username: 'text' });
 
 // Pre-save middleware to hash password
 UserSchema.pre('save', async function() {

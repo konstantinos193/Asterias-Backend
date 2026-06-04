@@ -15,12 +15,13 @@ import {
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { BypassAuthGuard } from '../auth/guards/bypass-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { RequireAdmin } from '../auth/decorators/require-admin.decorator';
 import { MongoObjectIdPipe } from '../common/pipes/mongodb-object-id.pipe';
 
 @Controller('admin')
+@UseGuards(JwtAuthGuard, AdminGuard)
+@RequireAdmin()
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 

@@ -50,12 +50,33 @@ export class RoomCombinationService {
    * Build room inventory with availability for given dates
    */
   async buildRoomInventory(checkIn: Date, checkOut: Date, guestCount?: number): Promise<RoomInventoryItem[]> {
-    const rooms = await this.roomModel.find({ totalRooms: { $gt: 0 } }).exec();
-    const inventory: RoomInventoryItem[] = [];
+    const rooms = await this.roomModel.find({ totalRooms: { $gt: 0 } }).lean().exec();
+    if (rooms.length === 0) return [];
 
+    const roomIds = rooms.map(r => r._id);
+
+    // One aggregate replaces N×countDocuments — group overlapping bookings by roomId
+    const bookedCounts: { _id: any; count: number }[] = await this.bookingModel.aggregate([
+      {
+        $match: {
+          roomId: { $in: roomIds },
+          bookingStatus: { $nin: ['CANCELLED'] },
+          $or: [
+            { checkIn: { $lt: checkOut, $gte: checkIn } },
+            { checkOut: { $gt: checkIn, $lte: checkOut } },
+            { checkIn: { $lte: checkIn }, checkOut: { $gte: checkOut } },
+          ],
+        },
+      },
+      { $group: { _id: '$roomId', count: { $sum: 1 } } },
+    ]);
+
+    const bookedMap = new Map(bookedCounts.map(b => [b._id.toString(), b.count]));
+
+    const inventory: RoomInventoryItem[] = [];
     for (const room of rooms) {
-      const availableCount = await this.getAvailableRoomCount(room._id.toString(), checkIn, checkOut);
-      
+      const booked = bookedMap.get(room._id.toString()) ?? 0;
+      const availableCount = Math.max(0, room.totalRooms - booked);
       if (availableCount > 0) {
         inventory.push({
           id: room._id.toString(),
@@ -64,7 +85,7 @@ export class RoomCombinationService {
           maxOccupancy: room.capacity,
           price: room.price,
           available: availableCount,
-          pricingByOccupancy: room.pricingByOccupancy || []
+          pricingByOccupancy: room.pricingByOccupancy || [],
         });
       }
     }
@@ -96,26 +117,6 @@ export class RoomCombinationService {
     }
     
     return inventory.sort((a, b) => a.price - b.price);
-  }
-
-  /**
-   * Get available room count for specific room type and dates
-   */
-  private async getAvailableRoomCount(roomId: string, checkIn: Date, checkOut: Date): Promise<number> {
-    const room = await this.roomModel.findById(roomId);
-    if (!room) return 0;
-
-    const bookedCount = await this.bookingModel.countDocuments({
-      roomId: new (require('mongoose').Types.ObjectId)(roomId),
-      bookingStatus: { $nin: ['CANCELLED'] },
-      $or: [
-        { checkIn: { $lt: checkOut, $gte: checkIn } },
-        { checkOut: { $gt: checkIn, $lte: checkOut } },
-        { checkIn: { $lte: checkIn }, checkOut: { $gte: checkOut } }
-      ]
-    });
-
-    return Math.max(0, room.totalRooms - bookedCount);
   }
 
   /**
@@ -491,27 +492,22 @@ export class RoomCombinationService {
     const totalGuests = adults + children;
     const inventory = await this.buildRoomInventory(checkIn, checkOut, totalGuests);
 
-    // First try to find multi-room combinations
     const multiRoomCombos = await this.generateMultiRoomCombinations(inventory, totalGuests);
-    
+
+    let targetId: string | null = null;
+
     if (multiRoomCombos.length > 0) {
-      // Return the cheapest room from the best combination
-      const bestCombo = multiRoomCombos[0];
-      const cheapestRoomId = bestCombo.rooms[0].roomId;
-      return this.roomModel.findById(cheapestRoomId);
+      targetId = multiRoomCombos[0].rooms[0].roomId;
+    } else {
+      const suitableRooms = inventory.filter(r => r.maxOccupancy >= totalGuests && r.available >= 1);
+      if (suitableRooms.length > 0) {
+        targetId = suitableRooms.sort((a, b) => a.price - b.price)[0].id;
+      } else {
+        const cheapest = inventory.find(r => r.available >= 1);
+        targetId = cheapest?.id ?? null;
+      }
     }
 
-    // Fallback: only if no multi-room combinations exist
-    const suitableRooms = inventory.filter(room => room.maxOccupancy >= totalGuests && room.available >= 1);
-    
-    if (suitableRooms.length === 0) {
-      // Last resort: return cheapest available room
-      const cheapestRoom = inventory.find(room => room.available >= 1);
-      return cheapestRoom ? this.roomModel.findById(cheapestRoom.id) : null;
-    }
-
-    // Return cheapest suitable room
-    const cheapestRoomId = suitableRooms.sort((a, b) => a.price - b.price)[0].id;
-    return this.roomModel.findById(cheapestRoomId);
+    return targetId ? this.roomModel.findById(targetId) : null;
   }
 }

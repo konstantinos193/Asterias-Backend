@@ -84,6 +84,8 @@ export const ContactSchema = SchemaFactory.createForClass(Contact);
 ContactSchema.index({ status: 1, createdAt: -1 });
 ContactSchema.index({ email: 1 });
 ContactSchema.index({ assignedTo: 1 });
+ContactSchema.index({ status: 1, assignedTo: 1 });
+ContactSchema.index({ priority: 1, createdAt: -1 });
 
 // Virtual for full name
 ContactSchema.virtual('fullName').get(function(this: ContactDocument) {

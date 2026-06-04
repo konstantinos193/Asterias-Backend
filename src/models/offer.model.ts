@@ -93,6 +93,9 @@ export const OfferSchema = SchemaFactory.createForClass(Offer);
 
 // Index for better query performance
 OfferSchema.index({ active: 1, startDate: 1, endDate: 1 });
+OfferSchema.index({ featured: 1, active: 1 });
+OfferSchema.index({ code: 1 });
+OfferSchema.index({ applicableRooms: 1, active: 1 });
 
 // Virtual for checking if offer is currently valid
 OfferSchema.virtual('isValid').get(function(this: OfferDocument) {
@@ -124,7 +127,7 @@ OfferSchema.statics.getActiveOffers = function() {
     active: true,
     startDate: { $lte: now },
     endDate: { $gte: now }
-  }).populate('applicableRooms');
+  }).populate('applicableRooms', 'name nameKey price image');
 };
 
 // Static method to find offer by code

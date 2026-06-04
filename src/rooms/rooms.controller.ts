@@ -2,18 +2,18 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, NotFoundE
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { RoomsService } from './rooms.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { BypassAuthGuard } from '../auth/guards/bypass-auth.guard';
+import { AdminGuard } from '../auth/guards/admin.guard';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { MongoObjectIdPipe } from '../common/pipes/mongodb-object-id.pipe';
 
 @ApiTags('rooms')
 @Controller('rooms')
-@UseGuards(BypassAuthGuard)
 export class RoomsController {
   constructor(private readonly roomsService: RoomsService) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Create a new room' })
   @ApiResponse({ status: 201, description: 'Room successfully created' })
   create(@Body() createRoomDto: CreateRoomDto) {
@@ -47,6 +47,7 @@ export class RoomsController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Update room' })
   @ApiResponse({ status: 200, description: 'Room successfully updated' })
   @ApiResponse({ status: 404, description: 'Room not found' })
@@ -59,6 +60,7 @@ export class RoomsController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Delete room' })
   @ApiResponse({ status: 200, description: 'Room successfully deleted' })
   @ApiResponse({ status: 404, description: 'Room not found' })
@@ -72,7 +74,7 @@ export class RoomsController {
   
   // Admin endpoints
   @Get('admin/types')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Get room types grouped by capacity' })
   @ApiResponse({ status: 200, description: 'Room types retrieved successfully' })
   getRoomTypes() {
@@ -80,7 +82,7 @@ export class RoomsController {
   }
   
   @Get('admin/availability/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Get room availability calendar' })
   @ApiResponse({ status: 200, description: 'Availability calendar retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Room not found' })
@@ -95,7 +97,7 @@ export class RoomsController {
   }
   
   @Patch('admin/:id/availability')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Update room availability' })
   @ApiResponse({ status: 200, description: 'Room availability updated successfully' })
   @ApiResponse({ status: 404, description: 'Room not found' })
@@ -107,7 +109,7 @@ export class RoomsController {
   }
 
   @Post('admin/:id/block')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Block dates for a room' })
   @ApiResponse({ status: 200, description: 'Dates blocked successfully' })
   @ApiResponse({ status: 404, description: 'Room not found' })
@@ -119,7 +121,7 @@ export class RoomsController {
   }
 
   @Delete('admin/:id/block/:blockId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Unblock dates for a room' })
   @ApiResponse({ status: 200, description: 'Dates unblocked successfully' })
   @ApiResponse({ status: 404, description: 'Room not found' })
@@ -131,7 +133,7 @@ export class RoomsController {
   }
   
   @Patch('admin/:id/pricing')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Update room pricing' })
   @ApiResponse({ status: 200, description: 'Room pricing updated successfully' })
   @ApiResponse({ status: 404, description: 'Room not found' })
@@ -151,7 +153,7 @@ export class RoomsController {
   }
   
   @Get('admin/stats')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Get room statistics' })
   @ApiResponse({ status: 200, description: 'Room statistics retrieved successfully' })
   getRoomStats() {

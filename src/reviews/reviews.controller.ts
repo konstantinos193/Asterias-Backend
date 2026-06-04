@@ -2,7 +2,6 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, No
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { ReviewsService } from './reviews.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { BypassAuthGuard } from '../auth/guards/bypass-auth.guard';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { ImportReviewsDto } from './dto/import-reviews.dto';
@@ -10,11 +9,11 @@ import { MongoObjectIdPipe } from '../common/pipes/mongodb-object-id.pipe';
 
 @ApiTags('reviews')
 @Controller('reviews')
-@UseGuards(BypassAuthGuard)
 export class ReviewsController {
   constructor(private readonly reviewsService: ReviewsService) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Create a new review' })
   @ApiResponse({ status: 201, description: 'Review successfully created' })
   create(@Body() createReviewDto: CreateReviewDto) {
@@ -79,6 +78,7 @@ export class ReviewsController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Update review' })
   @ApiResponse({ status: 200, description: 'Review successfully updated' })
   @ApiResponse({ status: 404, description: 'Review not found' })
@@ -91,6 +91,7 @@ export class ReviewsController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Delete review' })
   @ApiResponse({ status: 200, description: 'Review successfully deleted' })
   @ApiResponse({ status: 404, description: 'Review not found' })

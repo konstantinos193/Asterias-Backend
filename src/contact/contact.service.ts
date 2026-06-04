@@ -78,7 +78,8 @@ export class ContactService {
       .populate('response.respondedBy', 'name')
       .sort(sort)
       .skip(skip)
-      .limit(limit);
+      .limit(limit)
+      .lean();
 
     const total = await this.contactModel.countDocuments(filter);
 
@@ -207,54 +208,51 @@ export class ContactService {
    * Get contact statistics (admin only)
    */
   async getContactStats() {
-    const stats = await this.contactModel.getStats();
-    
-    // Additional stats
     const today = new Date();
     const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
 
-    const todayContacts = await this.contactModel.countDocuments({
-      createdAt: { $gte: startOfDay, $lt: endOfDay }
-    });
-
-    const priorityBreakdown = await this.contactModel.aggregate([
+    const [facets] = await this.contactModel.aggregate([
       {
-        $group: {
-          _id: '$priority',
-          count: { $sum: 1 }
-        }
-      }
+        $facet: {
+          byStatus: [{ $group: { _id: '$status', count: { $sum: 1 } } }],
+          total: [{ $count: 'n' }],
+          todayContacts: [
+            { $match: { createdAt: { $gte: startOfDay, $lt: endOfDay } } },
+            { $count: 'n' },
+          ],
+          byPriority: [{ $group: { _id: '$priority', count: { $sum: 1 } } }],
+          monthlyContacts: [
+            { $match: { createdAt: { $gte: startOfMonth, $lt: endOfMonth } } },
+            {
+              $group: {
+                _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ],
+        },
+      },
     ]);
 
-    const monthlyContacts = await this.contactModel.aggregate([
-      {
-        $match: {
-          createdAt: {
-            $gte: new Date(today.getFullYear(), today.getMonth(), 1),
-            $lt: new Date(today.getFullYear(), today.getMonth() + 1, 1)
-          }
-        }
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-          count: { $sum: 1 }
-        }
-      },
-      {
-        $sort: { _id: 1 }
-      }
-    ]);
+    const byStatus: Record<string, number> = facets.byStatus.reduce((acc: Record<string, number>, s: { _id: string; count: number }) => {
+      acc[s._id] = s.count;
+      return acc;
+    }, {});
 
     return {
-      ...stats,
-      todayContacts,
-      priorityBreakdown: priorityBreakdown.reduce((acc, item) => {
-        acc[item._id] = item.count;
+      total: facets.total[0]?.n ?? 0,
+      unread: byStatus['UNREAD'] ?? 0,
+      byStatus,
+      todayContacts: facets.todayContacts[0]?.n ?? 0,
+      priorityBreakdown: facets.byPriority.reduce((acc: Record<string, number>, p: { _id: string; count: number }) => {
+        acc[p._id] = p.count;
         return acc;
       }, {}),
-      monthlyContacts
+      monthlyContacts: facets.monthlyContacts,
     };
   }
 

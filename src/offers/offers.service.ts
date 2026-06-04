@@ -54,7 +54,7 @@ export class OffersService {
   }
 
   async getOfferById(id: string): Promise<OfferDocument> {
-    const offer = await this.offerModel.findById(id).populate('applicableRooms');
+    const offer = await this.offerModel.findById(id).populate('applicableRooms', 'name nameKey price image');
     if (!offer) {
       throw new NotFoundException('Offer not found');
     }
@@ -97,7 +97,7 @@ export class OffersService {
       id,
       updateOfferDto,
       { new: true, runValidators: true }
-    ).populate('applicableRooms');
+    ).populate('applicableRooms', 'name nameKey price image');
 
     if (!offer) {
       throw new NotFoundException('Offer not found');
@@ -120,10 +120,11 @@ export class OffersService {
     const skip = (page - 1) * limit;
 
     const offers = await this.offerModel.find(filter)
-      .populate('applicableRooms')
+      .populate('applicableRooms', 'name nameKey price image')
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit);
+      .limit(limit)
+      .lean();
 
     const total = await this.offerModel.countDocuments(filter);
 

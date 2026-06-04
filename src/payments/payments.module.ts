@@ -4,6 +4,7 @@ import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { Booking, BookingSchema } from '../models/booking.model';
 import { Room, RoomSchema } from '../models/room.model';
+import { RoomSeasonalPricing, RoomSeasonalPricingSchema } from '../models/room-seasonal-pricing.model';
 import { SettingsModule } from '../settings/settings.module';
 
 @Module({
@@ -11,6 +12,7 @@ import { SettingsModule } from '../settings/settings.module';
     MongooseModule.forFeature([
       { name: Room.name, schema: RoomSchema },
       { name: Booking.name, schema: BookingSchema },
+      { name: RoomSeasonalPricing.name, schema: RoomSeasonalPricingSchema },
     ]),
     SettingsModule,
   ],

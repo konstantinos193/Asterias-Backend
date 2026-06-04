@@ -7,6 +7,7 @@ import { OffersModule } from '../offers/offers.module';
 import { SettingsModule } from '../settings/settings.module';
 import { Booking, BookingSchema } from '../models/booking.model';
 import { Room, RoomSchema } from '../models/room.model';
+import { RoomBlockedDate, RoomBlockedDateSchema } from '../models/room-blocked-date.model';
 import { Contact, ContactSchema } from '../models/contact.model';
 import { User, UserSchema } from '../models/user.model';
 
@@ -15,6 +16,7 @@ import { User, UserSchema } from '../models/user.model';
     MongooseModule.forFeature([
       { name: Booking.name, schema: BookingSchema },
       { name: Room.name, schema: RoomSchema },
+      { name: RoomBlockedDate.name, schema: RoomBlockedDateSchema },
       { name: Contact.name, schema: ContactSchema },
       { name: User.name, schema: UserSchema },
     ]),

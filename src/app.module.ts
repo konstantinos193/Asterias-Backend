@@ -47,9 +47,9 @@ import { KeepAliveService } from './keep-alive/keep-alive.service';
     MongooseModule.forRoot(process.env.MONGODB_URI, {
       maxPoolSize: 20,
       minPoolSize: 5,
-      socketTimeoutMS: 10000,
-      serverSelectionTimeoutMS: 5000,
-      connectTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      serverSelectionTimeoutMS: 30000,
+      connectTimeoutMS: 30000,
     }),
     ThrottlerModule.forRoot([
       {

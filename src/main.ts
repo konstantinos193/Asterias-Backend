@@ -59,16 +59,18 @@ async function bootstrap() {
   // API prefix (health excluded so it stays at /health for uptime monitors)
   app.setGlobalPrefix('api', { exclude: ['health'] });
 
-  // Swagger documentation
-  const config = new DocumentBuilder()
-    .setTitle('Asterias Homes API')
-    .setDescription('Backend API for Asterias Homes hotel booking system')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // Swagger documentation — development only
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('Asterias Homes API')
+      .setDescription('Backend API for Asterias Homes hotel booking system')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   // Initialize services
   const emailService = app.get(EmailService);
@@ -102,7 +104,9 @@ async function bootstrap() {
   console.log(`🚀 Server running on port ${port}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`📊 Health check: http://0.0.0.0:${port}/health`);
-  console.log(`📚 API Documentation: http://0.0.0.0:${port}/api/docs`);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`📚 API Documentation: http://0.0.0.0:${port}/api/docs`);
+  }
 
   // Graceful shutdown handling
   setupGracefulShutdown(app, scheduledTasksService, memoryMonitorService, keepAliveService);

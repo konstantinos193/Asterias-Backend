@@ -1,14 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNumber, IsEnum, IsOptional, IsBoolean, Min, Max } from 'class-validator';
+import { IsString, IsNumber, IsEnum, IsOptional, IsBoolean, Min, Max, MaxLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class CreateReviewDto {
   @ApiProperty()
   @IsString()
+  @MaxLength(100)
   reviewerName: string;
 
   @ApiProperty()
   @IsString()
+  @MaxLength(5000)
   reviewText: string;
 
   @ApiProperty()
@@ -24,11 +26,13 @@ export class CreateReviewDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   sourceId?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   reviewerProfileUrl?: string;
 
   @ApiProperty({ enum: ['LOCAL_GUIDE', 'USER', 'OWNER', 'VERIFIED'], required: false })
@@ -44,6 +48,7 @@ export class CreateReviewDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   responseText?: string;
 
   @ApiProperty({ required: false })
@@ -78,6 +83,7 @@ export class CreateReviewDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
+  @MaxLength(10)
   language?: string;
 
   @ApiProperty({ required: false, type: [String] })

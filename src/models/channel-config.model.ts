@@ -38,3 +38,5 @@ export class ChannelConfig {
 export const ChannelConfigSchema = SchemaFactory.createForClass(ChannelConfig);
 
 ChannelConfigSchema.index({ roomId: 1, platform: 1 }, { unique: true, sparse: true });
+ChannelConfigSchema.index({ isActive: 1 });
+ChannelConfigSchema.index({ lastSyncedAt: -1 });

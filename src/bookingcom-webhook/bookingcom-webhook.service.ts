@@ -56,31 +56,21 @@ export class BookingComWebhookService {
 
   /**
    * Process booking creation webhook from Booking.com
-   * @param notification - The webhook notification data
-   * @returns Promise<any> - Processing result
    */
   async processBookingCreated(notification: any): Promise<any> {
     const externalBooking = notification.data;
 
     try {
-      // Find our internal room using the ID from Booking.com
       const room = await this.roomModel.findOne({ bookingcom_room_id: externalBooking.room_id });
-
       if (!room) {
         this.logger.warn(`Webhook received for a room not mapped in our system: ${externalBooking.room_id}`);
-        // Acknowledge receipt so Booking.com doesn't keep retrying.
         return { status: 'success', message: 'Webhook received for unmapped room.' };
       }
 
-      // Prevent duplicate bookings from repeated webhooks
-      const existingBooking = await this.bookingModel.findOne({ bookingcom_booking_id: externalBooking.booking_id });
-      if (existingBooking) {
-        this.logger.log(`Booking ${externalBooking.booking_id} from Booking.com already exists.`);
-        return { status: 'success', message: 'Booking already processed.' };
-      }
+      const bookingNumber = `BCM-${externalBooking.booking_id}`;
 
-      // Create a new booking in our system based on the webhook data
       const newBooking = new this.bookingModel({
+        bookingNumber,
         roomId: room._id,
         bookingcom_booking_id: externalBooking.booking_id,
         guestInfo: {
@@ -89,7 +79,7 @@ export class BookingComWebhookService {
           email: externalBooking.guest_details.email,
           phone: externalBooking.guest_details.phone,
           specialRequests: '',
-          language: 'en' // Default language, could be enhanced
+          language: 'en',
         },
         checkIn: externalBooking.checkin_date,
         checkOut: externalBooking.checkout_date,
@@ -98,20 +88,20 @@ export class BookingComWebhookService {
         children: externalBooking.children || 0,
         bookingStatus: 'CONFIRMED',
         source: 'bookingcom',
-        paymentMethod: 'CARD', // Assuming card payment for Booking.com
-        paymentStatus: 'PAID' // Assuming paid for Booking.com
+        paymentMethod: 'CARD',
+        paymentStatus: 'PAID',
       });
 
       await newBooking.save();
       this.logger.log(`Successfully created booking ${newBooking._id} from Booking.com webhook.`);
+      return { status: 'success', message: 'Booking created successfully', bookingId: newBooking._id };
 
-      return { 
-        status: 'success', 
-        message: 'Booking created successfully',
-        bookingId: newBooking._id 
-      };
-
-    } catch (error) {
+    } catch (error: any) {
+      // Duplicate key on bookingcom_booking_id or bookingNumber means webhook was already processed
+      if (error.code === 11000) {
+        this.logger.log(`Duplicate webhook for Booking.com booking ${externalBooking.booking_id} — ignoring.`);
+        return { status: 'success', message: 'Booking already processed.' };
+      }
       this.logger.error('Error processing Booking.com webhook:', error);
       throw error;
     }

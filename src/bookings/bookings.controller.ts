@@ -1,8 +1,8 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, NotFoundException, Query, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, NotFoundException, BadRequestException, Query, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { BookingsService } from './bookings.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { BypassAuthGuard } from '../auth/guards/bypass-auth.guard';
+import { OptionalAuthGuard } from '../auth/guards/optional-auth.guard';
 import { ApiKeyAuthGuard } from '../auth/guards/api-key-auth.guard';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
@@ -12,7 +12,6 @@ import { MongoObjectIdPipe } from '../common/pipes/mongodb-object-id.pipe';
 
 @ApiTags('bookings')
 @Controller('bookings')
-@UseGuards(BypassAuthGuard)
 export class BookingsController {
   constructor(private readonly bookingsService: BookingsService) {}
 
@@ -25,10 +24,18 @@ export class BookingsController {
 
   @Get()
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Get all bookings' })
+  @ApiOperation({ summary: 'Get all bookings (paginated)' })
   @ApiResponse({ status: 200, description: 'Bookings retrieved successfully' })
-  findAll() {
-    return this.bookingsService.findAll();
+  findAll(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.bookingsService.findAllPaginated({
+      page: page ? parseInt(page, 10) : 1,
+      limit: Math.min(limit ? parseInt(limit, 10) : 50, 200),
+      status,
+    });
   }
 
   @Get('availability')
@@ -36,7 +43,7 @@ export class BookingsController {
   @ApiResponse({ status: 200, description: 'Availability checked successfully' })
   async checkAvailability(@Query('roomId') roomId: string, @Query('checkIn') checkIn: string, @Query('checkOut') checkOut: string) {
     if (!roomId || !checkIn || !checkOut) {
-      throw new Error('roomId, checkIn, and checkOut are required');
+      throw new BadRequestException('roomId, checkIn, and checkOut are required');
     }
     return this.bookingsService.checkAvailability(roomId, new Date(checkIn), new Date(checkOut));
   }
@@ -50,6 +57,7 @@ export class BookingsController {
   }
 
   @Get('my-bookings')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get bookings for the current user' })
   @ApiResponse({ status: 200, description: 'User bookings retrieved successfully' })
   async getMyBookings(
@@ -58,25 +66,25 @@ export class BookingsController {
     @Query('limit') limit?: string,
     @Query('status') status?: string,
   ) {
-    const userId = req.user?._id;
-    const role = req.user?.role;
+    const userId = req.user._id;
+    const role = req.user.role;
     const parsedPage = page ? parseInt(page, 10) : 1;
-    const parsedLimit = limit ? parseInt(limit, 10) : 10;
+    const parsedLimit = Math.min(page ? parseInt(limit, 10) : 10, 100);
 
-    // Admins see all bookings; regular users see only their own
-    if (!userId || userId === 'dev-admin-id' || role === 'ADMIN') {
+    if (role === 'ADMIN') {
       return this.bookingsService.findAllPaginated({ page: parsedPage, limit: parsedLimit, status });
     }
     return this.bookingsService.findMyBookings(userId, { page: parsedPage, limit: parsedLimit, status });
   }
 
   @Post(':id/cancel')
+  @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Cancel a booking' })
   @ApiResponse({ status: 200, description: 'Booking cancelled successfully' })
   @ApiResponse({ status: 404, description: 'Booking not found' })
   async cancelBooking(@Param('id', MongoObjectIdPipe) id: string, @Request() req) {
-    const userId = req.user?._id;
-    const booking = await this.bookingsService.cancelBooking(id, userId === 'dev-admin-id' ? undefined : userId);
+    const userId = req.user?.role === 'ADMIN' ? undefined : req.user?._id;
+    const booking = await this.bookingsService.cancelBooking(id, userId);
     if (!booking) {
       throw new NotFoundException('Booking not found');
     }
@@ -123,6 +131,7 @@ export class BookingsController {
   }
 
   @Post(':id/send-email')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Send email to guest' })
   @ApiResponse({ status: 200, description: 'Email sent successfully' })
   @ApiResponse({ status: 404, description: 'Booking not found' })

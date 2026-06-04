@@ -10,12 +10,10 @@ export type BookingDocument = Booking & Document & {
 
 // Interface for static methods
 export interface BookingModel extends Model<BookingDocument> {
-  isApartmentAvailable(roomTypeId: Types.ObjectId, checkIn: Date, checkOut: Date, excludeBookingId?: Types.ObjectId): Promise<boolean>;
-  getAvailableApartmentCount(roomTypeId: Types.ObjectId, checkIn: Date, checkOut: Date): Promise<number>;
+  isApartmentAvailable(roomTypeId: Types.ObjectId, checkIn: Date, checkOut: Date, roomModel: Model<RoomDocument>, excludeBookingId?: Types.ObjectId): Promise<boolean>;
+  getAvailableApartmentCount(roomTypeId: Types.ObjectId, checkIn: Date, checkOut: Date, roomModel: Model<RoomDocument>): Promise<number>;
   isIndividualRoomAvailable(roomId: Types.ObjectId, checkIn: Date, checkOut: Date, excludeBookingId?: Types.ObjectId): Promise<boolean>;
   getStats(): Promise<any>;
-  dropProblematicIndexes(): Promise<void>;
-  emergencyFixCollection(): Promise<void>;
 }
 
 @Schema({ timestamps: true })
@@ -153,14 +151,6 @@ export class Booking {
   stripeRefundId: string;
 
   @ApiProperty()
-  @Prop({ default: [] })
-  history: Array<{
-    date: Date;
-    action: string;
-    user: string;
-  }>;
-
-  @ApiProperty()
   @Prop({ default: false })
   reminderSent: boolean;
 
@@ -219,79 +209,13 @@ BookingSchema.index({ createdAt: -1 });
 BookingSchema.index({ paymentStatus: 1, createdAt: -1 });
 BookingSchema.index({ checkIn: 1, bookingStatus: 1 });
 BookingSchema.index({ checkOut: 1, bookingStatus: 1 });
-
-// Method to drop problematic indexes
-BookingSchema.statics.dropProblematicIndexes = async function() {
-  try {
-    const collection = this.collection;
-    const indexes = await collection.indexes();
-    
-    console.log('🔍 Current database indexes:', indexes.map((idx: any) => ({
-      name: idx.name,
-      key: idx.key,
-      unique: idx.unique,
-      sparse: idx.sparse
-    })));
-    
-    const problematicIndex = indexes.find((index: any) => 
-      index.key && index.key.bookingcom_booking_id === 1 && index.unique === true
-    );
-    
-    if (problematicIndex) {
-      console.log('🚨 Found problematic unique index:', problematicIndex.name);
-      try {
-        await collection.dropIndex(problematicIndex.name);
-        console.log('✅ Successfully dropped problematic index:', problematicIndex.name);
-      } catch (dropError: any) {
-        console.error('❌ Failed to drop index:', problematicIndex.name, dropError.message);
-      }
-    } else {
-      console.log('✅ No problematic unique indexes found on bookingcom_booking_id');
-    }
-    
-    const updatedIndexes = await collection.indexes();
-    const stillProblematic = updatedIndexes.find((index: any) => 
-      index.key && index.key.bookingcom_booking_id === 1 && index.unique === true
-    );
-    
-    if (!stillProblematic) {
-      console.log('✅ Confirmed: No more problematic indexes on bookingcom_booking_id');
-    } else {
-      console.log('⚠️ Warning: Problematic index still exists:', stillProblematic.name);
-    }
-    
-  } catch (error: any) {
-    console.error('❌ Error dropping indexes:', error.message);
-  }
-};
-
-// Emergency method to recreate collection without problematic indexes
-BookingSchema.statics.emergencyFixCollection = async function() {
-  try {
-    const collection = this.collection;
-    const collectionName = collection.name;
-    
-    console.log('🚨 Emergency: Attempting to recreate collection without problematic indexes...');
-    
-    const allDocuments = await collection.find({}).toArray();
-    console.log(`📊 Found ${allDocuments.length} documents to preserve`);
-    
-    await collection.drop();
-    console.log('🗑️ Dropped problematic collection');
-    
-    if (allDocuments.length > 0) {
-      const newCollection = collection.db.collection(collectionName);
-      await newCollection.insertMany(allDocuments);
-      console.log('✅ Recreated collection with documents');
-    }
-    
-    console.log('✅ Emergency fix completed - collection recreated without problematic indexes');
-    
-  } catch (error: any) {
-    console.error('❌ Emergency fix failed:', error.message);
-    throw error;
-  }
-};
+BookingSchema.index({ 'guestInfo.email': 1 });
+BookingSchema.index({ bookingcom_booking_id: 1 }, { sparse: true });
+BookingSchema.index({ externalId: 1 }, { sparse: true });
+BookingSchema.index({ checkIn: 1, checkOut: 1, bookingStatus: 1 });
+BookingSchema.index({ source: 1, bookingStatus: 1 });
+BookingSchema.index({ roomId: 1, bookingStatus: 1, checkIn: 1, checkOut: 1 });
+BookingSchema.index({ stripePaymentIntentId: 1 }, { sparse: true });
 
 // Virtual for total guests
 BookingSchema.virtual('totalGuests').get(function(this: BookingDocument) {
@@ -307,21 +231,21 @@ BookingSchema.virtual('nights').get(function(this: BookingDocument) {
 });
 
 // Static methods
-BookingSchema.statics.isApartmentAvailable = async function(roomTypeId: Types.ObjectId, checkIn: Date, checkOut: Date, excludeBookingId: Types.ObjectId = null) {
-  // Get the Room model from mongoose
-  const mongoose = require('mongoose');
-  const Room = mongoose.model('Room');
-  const roomType = await Room.findById(roomTypeId);
-  if (!roomType) {
-    throw new Error('Room type not found');
-  }
+BookingSchema.statics.isApartmentAvailable = async function(
+  roomTypeId: Types.ObjectId,
+  checkIn: Date,
+  checkOut: Date,
+  roomModel: Model<RoomDocument>,
+  excludeBookingId: Types.ObjectId = null,
+) {
+  const roomType = await roomModel.findById(roomTypeId);
+  if (!roomType) throw new Error('Room type not found');
 
   const query: any = {
     roomId: roomTypeId,
     bookingStatus: { $nin: ['CANCELLED'] },
-    $or: [
-      { checkIn: { $lt: checkOut }, checkOut: { $gt: checkIn } },
-    ]
+    checkIn: { $lt: checkOut },
+    checkOut: { $gt: checkIn },
   };
 
   if (excludeBookingId) {
@@ -329,65 +253,43 @@ BookingSchema.statics.isApartmentAvailable = async function(roomTypeId: Types.Ob
   }
 
   const conflictingBookings = await this.countDocuments(query);
-  const isAvailable = conflictingBookings === 0;
-  
-  console.log(`Availability check for room ${roomTypeId}:`, {
-    roomId: roomTypeId,
-    checkIn: new Date(checkIn),
-    checkOut: new Date(checkOut),
-    conflictingBookings,
-    totalRooms: roomType.totalRooms,
-    isAvailable
-  });
-  
-  return isAvailable;
+  return conflictingBookings < (roomType.totalRooms ?? 1);
 };
 
-BookingSchema.statics.getAvailableApartmentCount = async function(roomTypeId: Types.ObjectId, checkIn: Date, checkOut: Date) {
-  // Get the Room model from mongoose
-  const mongoose = require('mongoose');
-  const Room = mongoose.model('Room');
-  const roomType = await Room.findById(roomTypeId);
-  if (!roomType) {
-    return 0;
-  }
+BookingSchema.statics.getAvailableApartmentCount = async function(
+  roomTypeId: Types.ObjectId,
+  checkIn: Date,
+  checkOut: Date,
+  roomModel: Model<RoomDocument>,
+) {
+  const roomType = await roomModel.findById(roomTypeId);
+  if (!roomType) return 0;
 
-  const allRoomsOfType = await Room.find({ nameKey: roomType.nameKey });
+  const allRoomsOfType = await roomModel.find({ nameKey: roomType.nameKey });
   const totalRoomsOfType = allRoomsOfType.length;
-  
-  if (totalRoomsOfType === 0) {
-    return 0;
-  }
+  if (totalRoomsOfType === 0) return 0;
 
-  const query = {
-    roomId: { $in: allRoomsOfType.map((room: any) => room._id) },
+  const conflictingBookings = await this.countDocuments({
+    roomId: { $in: allRoomsOfType.map((r: any) => r._id) },
     bookingStatus: { $nin: ['CANCELLED'] },
-    $or: [
-      { checkIn: { $lt: checkOut }, checkOut: { $gt: checkIn } },
-    ]
-  };
-
-  const conflictingBookings = await this.countDocuments(query as any);
-  const availableCount = totalRoomsOfType - conflictingBookings;
-
-  console.log(`Available count for room type ${roomType.nameKey}:`, {
-    totalRoomsOfType,
-    conflictingBookings,
-    availableCount,
-    checkIn: new Date(checkIn),
-    checkOut: new Date(checkOut)
+    checkIn: { $lt: checkOut },
+    checkOut: { $gt: checkIn },
   });
 
-  return availableCount > 0 ? availableCount : 0;
+  return Math.max(0, totalRoomsOfType - conflictingBookings);
 };
 
-BookingSchema.statics.isIndividualRoomAvailable = async function(roomId: Types.ObjectId, checkIn: Date, checkOut: Date, excludeBookingId: Types.ObjectId = null) {
+BookingSchema.statics.isIndividualRoomAvailable = async function(
+  roomId: Types.ObjectId,
+  checkIn: Date,
+  checkOut: Date,
+  excludeBookingId: Types.ObjectId = null,
+) {
   const query: any = {
-    roomId: roomId,
+    roomId,
     bookingStatus: { $nin: ['CANCELLED'] },
-    $or: [
-      { checkIn: { $lt: checkOut }, checkOut: { $gt: checkIn } },
-    ]
+    checkIn: { $lt: checkOut },
+    checkOut: { $gt: checkIn },
   };
 
   if (excludeBookingId) {
@@ -395,41 +297,37 @@ BookingSchema.statics.isIndividualRoomAvailable = async function(roomId: Types.O
   }
 
   const conflictingBookings = await this.countDocuments(query);
-  const isAvailable = conflictingBookings === 0;
-  
-  console.log(`Individual room availability check for room ${roomId}:`, {
-    roomId,
-    checkIn: new Date(checkIn),
-    checkOut: new Date(checkOut),
-    conflictingBookings,
-    isAvailable
-  });
-  
-  return isAvailable;
+  return conflictingBookings === 0;
 };
 
 BookingSchema.statics.getStats = async function() {
-  const stats = await this.aggregate([
-    {
-      $group: {
-        _id: null,
-        totalBookings: { $sum: 1 },
-        totalRevenue: { $sum: '$totalAmount' },
-        averageBookingValue: { $avg: '$totalAmount' }
-      }
-    }
-  ]);
-
   const today = new Date();
   const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
-  const todayBookings = await this.countDocuments({
-    checkIn: { $gte: startOfDay, $lt: endOfDay }
-  });
+  const [result] = await this.aggregate([
+    {
+      $facet: {
+        overall: [
+          {
+            $group: {
+              _id: null,
+              totalBookings: { $sum: 1 },
+              totalRevenue: { $sum: '$totalAmount' },
+              averageBookingValue: { $avg: '$totalAmount' },
+            },
+          },
+        ],
+        today: [
+          { $match: { checkIn: { $gte: startOfDay, $lt: endOfDay } } },
+          { $count: 'count' },
+        ],
+      },
+    },
+  ]).option({ maxTimeMS: 5000 });
 
   return {
-    ...stats[0],
-    todayBookings
+    ...result.overall[0],
+    todayBookings: result.today[0]?.count ?? 0,
   };
 };

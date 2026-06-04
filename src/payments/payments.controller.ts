@@ -1,8 +1,11 @@
-import { Controller, Post, Body, HttpException, HttpStatus, Get, Param, Res } from '@nestjs/common';
+import { Controller, Post, Body, HttpException, HttpStatus, Get, Param, Res, UseGuards } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentIntentDto } from './dto/create-payment-intent.dto';
 import { ConfirmPaymentDto } from './dto/confirm-payment.dto';
 import { Response } from 'express';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminGuard } from '../auth/guards/admin.guard';
+import { RequireAdmin } from '../auth/decorators/require-admin.decorator';
 
 @Controller('payments')
 export class PaymentsController {
@@ -10,27 +13,11 @@ export class PaymentsController {
 
   @Post('create-payment-intent')
   async createPaymentIntent(@Body() createPaymentIntentDto: CreatePaymentIntentDto, @Res() res: Response) {
-    console.log('🔍 Payment intent request received:', {
-      roomId: createPaymentIntentDto.roomId,
-      checkIn: createPaymentIntentDto.checkIn,
-      checkOut: createPaymentIntentDto.checkOut,
-      adults: createPaymentIntentDto.adults,
-      children: createPaymentIntentDto.children,
-      currency: createPaymentIntentDto.currency
-    });
-    
     try {
       const result = await this.paymentsService.createPaymentIntent(createPaymentIntentDto);
-      console.log('✅ Payment intent created successfully, sending response:', {
-        hasClientSecret: !!result.clientSecret,
-        hasPaymentIntentId: !!result.paymentIntentId,
-        amount: result.amount,
-        currency: result.currency
-      });
       return res.status(201).json(result);
     } catch (error: any) {
-      console.error('💥 Payment intent error:', error);
-      return res.status(500).json({ error: error.message || 'Failed to create payment intent' });
+      return res.status(error.status || 500).json({ error: error.message || 'Failed to create payment intent' });
     }
   }
 
@@ -47,6 +34,8 @@ export class PaymentsController {
   }
 
   @Post('create-cash-booking')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @RequireAdmin()
   async createCashBooking(@Body() createCashBookingDto: any) {
     try {
       return await this.paymentsService.createCashBooking(createCashBookingDto);

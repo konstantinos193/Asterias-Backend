@@ -1,11 +1,24 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNumber, IsDate, IsOptional, IsEnum, IsObject, IsBoolean, Min, IsNotEmpty } from 'class-validator';
+import { IsString, IsNumber, IsDate, IsOptional, IsEnum, IsObject, IsBoolean, Min, IsNotEmpty, MaxLength, Validate, ValidatorConstraint, ValidatorConstraintInterface, ValidationArguments } from 'class-validator';
 import { Type } from 'class-transformer';
+
+@ValidatorConstraint({ name: 'isAfterCheckIn', async: false })
+class IsAfterCheckIn implements ValidatorConstraintInterface {
+  validate(checkOut: Date, args: ValidationArguments) {
+    const checkIn = (args.object as any).checkIn;
+    if (!checkIn || !checkOut) return true;
+    return new Date(checkOut) > new Date(checkIn);
+  }
+  defaultMessage() {
+    return 'checkOut must be after checkIn';
+  }
+}
 
 export class CreateBookingDto {
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
+  @MaxLength(50)
   bookingNumber: string;
 
   @ApiProperty()
@@ -40,6 +53,7 @@ export class CreateBookingDto {
   @IsDate()
   @Type(() => Date)
   @IsNotEmpty()
+  @Validate(IsAfterCheckIn)
   checkOut: Date;
 
   @ApiProperty()
@@ -83,6 +97,7 @@ export class CreateBookingDto {
   @ApiProperty()
   @IsString()
   @IsOptional()
+  @MaxLength(1000)
   notes?: string;
 
   @ApiProperty()

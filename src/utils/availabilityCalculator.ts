@@ -31,13 +31,9 @@ async function calculateRoomAvailabilityForDate(
 
     const existingBooking = await bookingModel.findOne({
       roomId: roomId,
-      $or: [
-        // Check-in date falls on or before this date
-        { checkIn: { $lte: checkInDate } },
-        // Check-out date falls after this date
-        { checkOut: { $gt: checkInDate } }
-      ],
-      bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } // Only count active bookings
+      checkIn: { $lte: checkInDate },
+      checkOut: { $gt: checkInDate },
+      bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
     });
 
     // Room is available if no booking exists for this date
@@ -68,31 +64,48 @@ async function calculateRoomAvailabilityForDate(
 }
 
 /**
- * Calculate availability for multiple rooms on a specific date
- * @param roomModel - Room model injected from NestJS
- * @param bookingModel - Booking model injected from NestJS
- * @param date - Date to check
- * @returns Array of room availability for the date
+ * Calculate availability for multiple rooms on a specific date.
+ * Uses a single aggregation instead of one query per room.
  */
 async function calculateDateAvailability(
   roomModel: Model<RoomDocument>,
   bookingModel: Model<BookingDocument>,
-  date: Date
+  date: Date,
+  roomIds?: string[]
 ) {
   try {
-    const rooms = await roomModel.find({});
-    const availability = [];
+    const nextDay = new Date(date);
+    nextDay.setDate(nextDay.getDate() + 1);
 
-    for (const room of rooms) {
-      const startDate = new Date(date);
-      const endDate = new Date(date);
-      endDate.setDate(endDate.getDate() + 1);
+    const roomFilter = roomIds && roomIds.length > 0 ? { _id: { $in: roomIds } } : {};
+    const rooms = await roomModel.find(roomFilter).lean();
 
-      const roomAvailability = await calculateRoomAvailabilityForDate(roomModel, bookingModel, room._id.toString(), date);
-      availability.push(roomAvailability);
-    }
+    const bookedCounts: { _id: any; count: number }[] = await bookingModel.aggregate([
+      {
+        $match: {
+          bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
+          checkIn: { $lt: nextDay },
+          checkOut: { $gt: date },
+        },
+      },
+      { $group: { _id: '$roomId', count: { $sum: 1 } } },
+    ]);
 
-    return availability;
+    const bookedMap = new Map(bookedCounts.map(b => [b._id.toString(), b.count]));
+
+    return rooms.map(room => {
+      const booked = bookedMap.get(room._id.toString()) ?? 0;
+      const isAvailable = booked === 0;
+      return {
+        roomId: room._id,
+        roomName: room.name,
+        totalRooms: room.totalRooms || 1,
+        isAvailable,
+        status: isAvailable ? 'available' : 'booked',
+        color: isAvailable ? 'green' : 'red',
+        textColor: 'white',
+      };
+    });
   } catch (error) {
     console.error('Error calculating date availability:', error);
     throw error;
@@ -100,12 +113,8 @@ async function calculateDateAvailability(
 }
 
 /**
- * Calculate availability for a room over a month period
- * @param roomModel - Room model injected from NestJS
- * @param bookingModel - Booking model injected from NestJS
- * @param roomId - Room ID
- * @param monthDate - Any date in the month
- * @returns Monthly availability data
+ * Calculate availability for a room over a month period.
+ * Fetches all bookings for the month in one query, then computes per-day in memory.
  */
 async function calculateMonthlyAvailability(
   roomModel: Model<RoomDocument>,
@@ -115,19 +124,47 @@ async function calculateMonthlyAvailability(
 ) {
   try {
     const startOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
-    const endOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
-    
-    const availability = {};
-    
+    const endOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59);
+
+    const room = await roomModel.findById(roomId).lean();
+    if (!room) throw new Error('Room not found');
+
+    const bookings = await bookingModel
+      .find({
+        roomId,
+        bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
+        checkIn: { $lt: endOfMonth },
+        checkOut: { $gt: startOfMonth },
+      })
+      .select('checkIn checkOut')
+      .lean();
+
+    // Pre-build Set for O(1) per-date lookups
+    const bookedDateSet = new Set<string>();
+    for (const b of bookings) {
+      const d = new Date(b.checkIn);
+      while (d < b.checkOut) {
+        bookedDateSet.add(d.toISOString().split('T')[0]);
+        d.setDate(d.getDate() + 1);
+      }
+    }
+
+    const availability: Record<string, any> = {};
+
     for (let date = new Date(startOfMonth); date <= endOfMonth; date.setDate(date.getDate() + 1)) {
       const currentDate = new Date(date);
-      const nextDate = new Date(currentDate);
-      nextDate.setDate(nextDate.getDate() + 1);
-      
-      const dayAvailability = await calculateRoomAvailabilityForDate(roomModel, bookingModel, roomId, currentDate);
-      availability[currentDate.toISOString().split('T')[0]] = dayAvailability;
+      const isAvailable = !bookedDateSet.has(currentDate.toISOString().split('T')[0]);
+      availability[currentDate.toISOString().split('T')[0]] = {
+        roomId,
+        roomName: room.name,
+        totalRooms: room.totalRooms || 1,
+        isAvailable,
+        status: isAvailable ? 'available' : 'booked',
+        color: isAvailable ? 'green' : 'red',
+        textColor: 'white',
+      };
     }
-    
+
     return availability;
   } catch (error) {
     console.error('Error calculating monthly availability:', error);
@@ -137,73 +174,83 @@ async function calculateMonthlyAvailability(
 
 /**
  * Calculate aggregated availability for all rooms over a month period (for calendar display)
+ * @param roomModel - Room model injected from NestJS
  * @param bookingModel - Booking model injected from NestJS
  * @param monthDate - Any date in the month
  * @returns Monthly availability data aggregated across all rooms
  */
 async function calculateMonthlyAggregatedAvailability(
+  roomModel: Model<RoomDocument>,
   bookingModel: Model<BookingDocument>,
   monthDate: Date
 ) {
   try {
     const startOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
-    const endOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
-    
-    // We have 7 identical standard rooms
-    const totalRooms = 7;
-    
-    console.log(`[DEBUG] Calculating availability for ${totalRooms} standard rooms`);
-    
-    const availability = {};
-    
-    for (let date = new Date(startOfMonth); date <= endOfMonth; date.setDate(date.getDate() + 1)) {
+    // End of month at end-of-day so the last day is included
+    const endOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59);
+
+    const totalRooms = await roomModel.countDocuments({ available: true });
+
+    // One query: all bookings that overlap this month at all
+    const bookings = await bookingModel
+      .find({
+        checkIn: { $lt: endOfMonth },
+        checkOut: { $gt: startOfMonth },
+        bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
+      })
+      .select('checkIn checkOut')
+      .lean();
+
+    // Pre-compute booked count per date for O(1) lookups
+    const bookedCountByDate = new Map<string, number>();
+    for (const b of bookings) {
+      const d = new Date(b.checkIn);
+      while (d < b.checkOut) {
+        const ds = d.toISOString().split('T')[0];
+        bookedCountByDate.set(ds, (bookedCountByDate.get(ds) ?? 0) + 1);
+        d.setDate(d.getDate() + 1);
+      }
+    }
+
+    const availability: Record<string, any> = {};
+
+    for (
+      let date = new Date(startOfMonth);
+      date <= endOfMonth;
+      date.setDate(date.getDate() + 1)
+    ) {
       const currentDate = new Date(date);
       const dateStr = currentDate.toISOString().split('T')[0];
-      
-      // For each date, check how many rooms are booked
-      const bookedRooms = await bookingModel.countDocuments({
-        $and: [
-          // Check-in date is on or before this date
-          { checkIn: { $lte: currentDate } },
-          // Check-out date is after this date (room is still occupied)
-          { checkOut: { $gt: currentDate } },
-          // Only count confirmed/active bookings
-          { bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } }
-        ]
-      });
-      
-      const availableRooms = totalRooms - bookedRooms;
-      
-      console.log(`[DEBUG] Date ${dateStr}: ${availableRooms}/${totalRooms} rooms available (${bookedRooms} booked)`);
-      
-      // Determine status and color based on availability percentage
+
+      const bookedRooms = bookedCountByDate.get(dateStr) ?? 0;
+
+      const availableRooms = Math.max(0, totalRooms - bookedRooms);
+
       let status: string, color: string, textColor: string;
-      const availabilityPercentage = (availableRooms / totalRooms) * 100;
-      
       if (availableRooms === 0) {
         status = 'booked';
         color = 'red';
         textColor = 'white';
-      } else if (availableRooms <= 2) { // 1-2 rooms available = limited
+      } else if (availableRooms <= 2) {
         status = 'limited';
         color = 'yellow';
         textColor = 'black';
-      } else { // 3+ rooms available = good availability
+      } else {
         status = 'available';
         color = 'green';
         textColor = 'white';
       }
-      
+
       availability[dateStr] = {
         status,
         color,
         textColor,
         availableRooms,
         totalRooms,
-        isAvailable: availableRooms > 0
+        isAvailable: availableRooms > 0,
       };
     }
-    
+
     return availability;
   } catch (error) {
     console.error('Error calculating monthly aggregated availability:', error);
@@ -248,22 +295,22 @@ async function calculateRoomAvailability(
       bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } // Only count active bookings
     });
 
-    // Calculate total booked nights in the range
+    // Pre-build a Set for O(1) per-date lookups
+    const bookedDateSet = new Set<string>();
+    for (const booking of bookings) {
+      const d = new Date(booking.checkIn);
+      while (d < booking.checkOut) {
+        bookedDateSet.add(d.toISOString().split('T')[0]);
+        d.setDate(d.getDate() + 1);
+      }
+    }
+
     let totalBookedNights = 0;
     const rangeStart = new Date(startDate);
     const rangeEnd = new Date(endDate);
 
     for (let date = new Date(rangeStart); date < rangeEnd; date.setDate(date.getDate() + 1)) {
-      const currentDate = new Date(date);
-      
-      // Check if this date is booked
-      const isBooked = bookings.some(booking => {
-        const checkIn = new Date(booking.checkIn);
-        const checkOut = new Date(booking.checkOut);
-        return currentDate >= checkIn && currentDate < checkOut;
-      });
-
-      if (isBooked) {
+      if (bookedDateSet.has(date.toISOString().split('T')[0])) {
         totalBookedNights++;
       }
     }

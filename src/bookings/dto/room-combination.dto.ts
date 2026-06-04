@@ -1,4 +1,4 @@
-import { IsNumber, IsDate, IsOptional, IsArray, IsString, Min, ValidateNested, IsBoolean } from 'class-validator';
+import { IsNumber, IsDate, IsOptional, IsArray, IsString, Min, ValidateNested, IsBoolean, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -114,23 +114,28 @@ export class MultiRoomBookingDto {
 
   @ApiProperty({ description: 'Guest information' })
   @IsString()
+  @MaxLength(100)
   guestFirstName: string;
 
   @ApiProperty({ description: 'Guest information' })
   @IsString()
+  @MaxLength(100)
   guestLastName: string;
 
   @ApiProperty({ description: 'Guest email' })
   @IsString()
+  @MaxLength(254)
   guestEmail: string;
 
   @ApiProperty({ description: 'Guest phone' })
   @IsString()
+  @MaxLength(30)
   guestPhone: string;
 
   @ApiProperty({ description: 'Special requests', required: false })
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
   specialRequests?: string;
 
   @ApiProperty({ description: 'Guest language', enum: ['el', 'en', 'de'], default: 'en' })

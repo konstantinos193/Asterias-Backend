@@ -5,6 +5,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Booking } from '../models/booking.model';
 import { Room } from '../models/room.model';
+import { User, UserDocument } from '../models/user.model';
 @Injectable()
 export class ScheduledTasksService {
   private readonly logger = new Logger(ScheduledTasksService.name);
@@ -15,6 +16,7 @@ export class ScheduledTasksService {
     private readonly schedulerRegistry: SchedulerRegistry,
     @InjectModel(Booking.name) private bookingModel: Model<Booking>,
     @InjectModel(Room.name) private roomModel: Model<Room>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
   startTasks(): void {
@@ -61,11 +63,14 @@ export class ScheduledTasksService {
     const from = new Date(now.getTime() - 28 * 60 * 60 * 1000);
     const to   = new Date(now.getTime() - 20 * 60 * 60 * 1000);
 
-    const bookings = await this.bookingModel.find({
-      bookingStatus: 'CHECKED_OUT',
-      postCheckoutEmailSent: { $ne: true },
-      checkOut: { $gte: from, $lte: to },
-    }).exec();
+    const bookings = await this.bookingModel
+      .find({
+        bookingStatus: 'CHECKED_OUT',
+        postCheckoutEmailSent: { $ne: true },
+        checkOut: { $gte: from, $lte: to },
+      })
+      .populate('roomId', 'name')
+      .exec();
 
     this.logger.log(`Found ${bookings.length} bookings for post-checkout email`);
 
@@ -139,10 +144,10 @@ export class ScheduledTasksService {
   private async checkArrivalReminders(): Promise<void> {
     try {
       this.logger.log('🔔 Checking for arrival reminders...');
-      
+
       const now = new Date();
       const reminderTime = new Date(now.getTime() + (24 * 60 * 60 * 1000)); // 24 hours from now
-      
+
       // Find bookings that need reminders
       const bookings = await this.bookingModel.find({
         checkIn: {
@@ -151,44 +156,60 @@ export class ScheduledTasksService {
         },
         bookingStatus: 'CONFIRMED',
         reminderSent: { $ne: true }
-      });
+      }).lean();
 
       this.logger.log(`Found ${bookings.length} bookings needing reminders`);
 
-      for (const booking of bookings) {
-        try {
-          // Get room details
-          const room = await this.roomModel.findById(booking.roomId);
-          if (!room) continue;
+      // Load all needed rooms in one query instead of one per booking
+      const roomIds = [...new Set(bookings.map(b => b.roomId?.toString()).filter(Boolean))];
+      const rooms = await this.roomModel.find({ _id: { $in: roomIds } }).lean();
+      const roomMap = new Map(rooms.map(r => [r._id.toString(), r]));
 
-          // Send reminder with customer's language
-          const result = await this.emailService.sendBookingConfirmation({
-            bookingId: booking.bookingNumber,
-            guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
-            guestEmail: booking.guestInfo.email,
-            roomName: room.name,
-            checkIn: booking.checkIn,
-            checkInTime: '15:00',
-            totalPrice: booking.totalAmount,
-            language: booking.guestInfo.language
-          }, { language: booking.guestInfo.language });
-          
-          if (result && result.success) {
-            // Mark reminder as sent
-            booking.reminderSent = true;
-            await booking.save();
-            
-            this.logger.log(`✅ Reminder sent for booking ${booking._id}`);
-          } else {
+      const sentIds: any[] = [];
+      const BATCH_SIZE = 5;
+
+      for (let i = 0; i < bookings.length; i += BATCH_SIZE) {
+        const batch = bookings.slice(i, i + BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map(async (booking) => {
+            const room = roomMap.get(booking.roomId?.toString());
+            if (!room) return null;
+            const result = await this.emailService.sendBookingConfirmation({
+              bookingId: booking.bookingNumber,
+              guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
+              guestEmail: booking.guestInfo.email,
+              roomName: room.name,
+              checkIn: booking.checkIn,
+              checkInTime: '15:00',
+              totalPrice: booking.totalAmount,
+              language: booking.guestInfo.language,
+            }, { language: booking.guestInfo.language });
+            if (result?.success) {
+              this.logger.log(`✅ Reminder sent for booking ${booking._id}`);
+              return booking._id;
+            }
             this.logger.log(`❌ Failed to send reminder for booking ${booking._id}`);
-          }
+            return null;
+          }),
+        );
 
-        } catch (error) {
-          this.logger.error(`Error sending reminder for booking ${booking._id}:`, error);
+        for (const r of results) {
+          if (r.status === 'fulfilled' && r.value) sentIds.push(r.value);
+          else if (r.status === 'rejected') this.logger.error('Error sending reminder:', r.reason);
         }
 
-        // Small delay between emails to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Delay between batches only, not between every single email
+        if (i + BATCH_SIZE < bookings.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      if (sentIds.length > 0) {
+        await this.bookingModel.updateMany(
+          { _id: { $in: sentIds } },
+          { $set: { reminderSent: true } },
+        );
+        this.logger.log(`Marked ${sentIds.length} bookings as reminderSent`);
       }
 
     } catch (error) {
@@ -219,22 +240,25 @@ export class ScheduledTasksService {
   private async cleanupNotificationFlags(): Promise<void> {
     try {
       this.logger.log('🧹 Cleaning up old notification flags...');
-      
-      // Remove reminderSent flag from bookings that are in the past
+
       const pastDate = new Date();
       pastDate.setDate(pastDate.getDate() - 1);
-      
-      const result = await this.bookingModel.updateMany(
-        { 
-          checkOut: { $lt: pastDate },
-          reminderSent: true 
-        },
-        { 
-          $unset: { reminderSent: 1 } 
-        }
-      );
-      
-      this.logger.log(`Cleaned up ${result.modifiedCount} old notification flags`);
+
+      const [bookingResult, tokenResult] = await Promise.all([
+        // Remove reminderSent flag from past bookings
+        this.bookingModel.updateMany(
+          { checkOut: { $lt: pastDate }, reminderSent: true },
+          { $unset: { reminderSent: 1 } },
+        ),
+        // Null out expired password reset tokens
+        this.userModel.updateMany(
+          { resetPasswordExpires: { $lt: new Date() }, resetPasswordToken: { $ne: null } },
+          { $set: { resetPasswordToken: null, resetPasswordExpires: null } },
+        ),
+      ]);
+
+      this.logger.log(`Cleaned up ${bookingResult.modifiedCount} old notification flags`);
+      this.logger.log(`Cleared ${tokenResult.modifiedCount} expired password reset tokens`);
 
     } catch (error) {
       this.logger.error('Error cleaning up notification flags:', error);
@@ -243,44 +267,35 @@ export class ScheduledTasksService {
 
   private async checkLowInventory(date: Date): Promise<void> {
     try {
-      const rooms = await this.roomModel.find();
       const checkDate = new Date(date);
-      
-      // Check availability for each room
-      const roomsData = await Promise.all(rooms.map(async (room) => {
-        const bookings = await this.bookingModel.find({
-          roomId: room._id,
+
+      // Two queries instead of 1 + N: count total rooms and get booked roomIds for the date
+      const [totalRooms, bookedRoomIds] = await Promise.all([
+        this.roomModel.countDocuments(),
+        this.bookingModel.distinct('roomId', {
           checkIn: { $lte: checkDate },
           checkOut: { $gt: checkDate },
-          bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] }
-        });
-        
-        return {
-          name: room.name,
-          total: 1,
-          available: bookings.length === 0 ? 1 : 0
-        };
-      }));
-      
-      // Check if inventory is low (less than 20% available)
-      const totalAvailable = roomsData.reduce((sum, room) => sum + room.available, 0);
-      const totalRooms = roomsData.length;
-      const availabilityPercentage = (totalAvailable / totalRooms) * 100;
-      
+          bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
+        }),
+      ]);
+
+      const totalAvailable = totalRooms - bookedRoomIds.length;
+      const availabilityPercentage = totalRooms > 0 ? (totalAvailable / totalRooms) * 100 : 100;
+
       if (availabilityPercentage <= 20) {
-        await this.sendLowInventoryAlert(roomsData, { 
+        await this.sendLowInventoryAlert([], {
           date: date.toISOString(),
-          totalAvailable: totalAvailable,
-          totalRooms: totalRooms
+          totalAvailable,
+          totalRooms,
         });
       }
-      
+
     } catch (error) {
       this.logger.error('Error checking low inventory:', error);
     }
   }
 
-  private async sendLowInventoryAlert(inventoryData: any[], options: any): Promise<void> {
+  private async sendLowInventoryAlert(_inventoryData: any[], options: any): Promise<void> {
     try {
       const alertData = {
         bookingId: 'INVENTORY_ALERT',

@@ -1,8 +1,9 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
-import { Model } from 'mongoose';
-import { InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, Types } from 'mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Room, RoomSchema } from '../models/room.model';
 import { Booking, BookingSchema } from '../models/booking.model';
+import { RoomSeasonalPricing, RoomSeasonalPricingDocument } from '../models/room-seasonal-pricing.model';
 import { SettingsService } from '../settings/settings.service';
 import Stripe from 'stripe';
 
@@ -13,15 +14,11 @@ export class PaymentsService {
   constructor(
     @InjectModel('Room') private roomModel: Model<Room>,
     @InjectModel('Booking') private bookingModel: Model<Booking>,
+    @InjectModel(RoomSeasonalPricing.name) private seasonalPricingModel: Model<RoomSeasonalPricingDocument>,
+    @InjectConnection() private connection: Connection,
     private settingsService: SettingsService,
   ) {
-    if (!process.env.STRIPE_SECRET_KEY) {
-      console.error('⚠️  WARNING: STRIPE_SECRET_KEY is not set in environment variables');
-      console.error('⚠️  Payment functionality will not work without a valid Stripe API key');
-      console.error('⚠️  Please add STRIPE_SECRET_KEY to your .env file');
-    }
-
-    this.stripe = process.env.STRIPE_SECRET_KEY 
+    this.stripe = process.env.STRIPE_SECRET_KEY
       ? new Stripe(process.env.STRIPE_SECRET_KEY)
       : null;
   }
@@ -47,9 +44,13 @@ export class PaymentsService {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
 
-    // Check availability for individual room
-    const isAvailable = await this.isIndividualRoomAvailable(roomId, checkIn, checkOut);
-    if (!isAvailable) {
+    // Quick availability check (full atomic check happens at booking creation time)
+    const overlap = await this.bookingModel.countDocuments({
+      roomId,
+      bookingStatus: { $nin: ['CANCELLED'] },
+      $or: [{ checkIn: { $lt: new Date(checkOut) }, checkOut: { $gt: new Date(checkIn) } }],
+    });
+    if (overlap > 0) {
       throw new HttpException('Room is not available for the selected dates', HttpStatus.BAD_REQUEST);
     }
 
@@ -59,16 +60,13 @@ export class PaymentsService {
     const nights = Math.ceil((checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24));
 
     // Use seasonal pricing if a period covers the stay dates
-    const effectivePrice = this.getEffectivePrice(room, checkInDate, parseInt(adults) + parseInt(children || 0));
+    const effectivePrice = await this.getEffectivePrice((room as any)._id, checkInDate, parseInt(adults) + parseInt(children || 0), (room as any).price);
     let basePrice = nights * effectivePrice;
     let discountAmount = 0;
     let appliedOffer = null;
 
     // Apply offer discount if offerId is provided
-    if (offerId) {
-      // TODO: Implement offer logic when Offer model is available
-      console.log('Offer logic not yet implemented in NestJS');
-    }
+    // TODO: apply offer discount (offerId present but offer logic not yet implemented)
 
     // Load tax rates from settings (fallback to defaults if not configured)
     const settings = await this.settingsService.getSettings();
@@ -158,131 +156,110 @@ export class PaymentsService {
       finalPrice
     } = paymentIntent.metadata;
 
-    // Check if room still exists and is available
+    // Check if room still exists
     const room = await this.roomModel.findById(roomId);
     if (!room) {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
 
-    const isAvailable = await this.isIndividualRoomAvailable(roomId, checkIn, checkOut);
-    if (!isAvailable) {
-      throw new HttpException('Room is no longer available for the selected dates', HttpStatus.BAD_REQUEST);
+    // Idempotency: if a booking for this payment intent already exists, return it
+    const existing = await this.bookingModel.findOne({ stripePaymentIntentId: paymentIntentId });
+    if (existing) {
+      return { message: 'Payment confirmed and booking created successfully', booking: existing };
     }
 
-    // Generate booking number manually
-    const year = new Date().getFullYear();
-    const lastBooking = await this.bookingModel.findOne(
-      { 
-        bookingNumber: { $regex: `^AST-${year}-` }
-      },
-      { bookingNumber: 1 }
-    ).sort({ bookingNumber: -1 });
-    
-    let nextNumber = 1;
-    if (lastBooking && lastBooking.bookingNumber) {
-      const lastNumber = parseInt(lastBooking.bookingNumber.split('-')[2]);
-      nextNumber = lastNumber + 1;
+    const bookingNumber = await this.generateBookingNumber();
+    const session = await this.connection.startSession();
+    let booking: any;
+    try {
+      await session.withTransaction(async () => {
+        const overlap = await this.bookingModel.countDocuments({
+          roomId,
+          bookingStatus: { $nin: ['CANCELLED'] },
+          $or: [{ checkIn: { $lt: new Date(checkOut) }, checkOut: { $gt: new Date(checkIn) } }],
+        }, { session });
+
+        if (overlap > 0) {
+          throw new HttpException('Room is no longer available for the selected dates', HttpStatus.BAD_REQUEST);
+        }
+
+        booking = new this.bookingModel({
+          roomId,
+          guestInfo: { ...guestInfo, specialRequests: specialRequests || '' },
+          checkIn: new Date(checkIn),
+          checkOut: new Date(checkOut),
+          adults: parseInt(adults),
+          children: parseInt(children),
+          totalAmount: paymentIntent.amount / 100,
+          paymentMethod: 'CARD',
+          paymentStatus: 'PAID',
+          bookingStatus: 'CONFIRMED',
+          stripePaymentIntentId: paymentIntentId,
+          bookingNumber,
+          offerId: offerId || undefined,
+          originalPrice: parseFloat(originalPrice) || undefined,
+          discountAmount: parseFloat(discountAmount) || undefined,
+        });
+        await booking.save({ session });
+      });
+    } finally {
+      await session.endSession();
     }
-    
-    const bookingNumber = `AST-${year}-${String(nextNumber).padStart(3, '0')}`;
-    console.log('Generated booking number:', bookingNumber);
-
-    // Create booking
-    const booking = new this.bookingModel({
-      roomId,
-      guestInfo: {
-        ...guestInfo,
-        specialRequests: specialRequests || ''
-      },
-      checkIn: new Date(checkIn),
-      checkOut: new Date(checkOut),
-      adults: parseInt(adults),
-      children: parseInt(children),
-      totalAmount: paymentIntent.amount / 100,
-      paymentMethod: 'CARD',
-      paymentStatus: 'PAID',
-      bookingStatus: 'CONFIRMED',
-      stripePaymentIntentId: paymentIntentId,
-      bookingNumber: bookingNumber,
-      offerId: offerId || undefined,
-      originalPrice: parseFloat(originalPrice) || undefined,
-      discountAmount: parseFloat(discountAmount) || undefined
-    });
-
-    await booking.save();
-    console.log('Booking saved successfully, bookingNumber:', booking.bookingNumber);
-    
-    // TODO: Send confirmation email when email service is available
-    console.log('Email service not yet implemented in NestJS');
 
     return {
       message: 'Payment confirmed and booking created successfully',
-      booking
+      booking,
     };
   }
 
   async createCashBooking(createCashBookingDto: any) {
     const { roomId, checkIn, checkOut, adults, children, totalAmount, guestInfo, specialRequests, depositAmount, depositPaid } = createCashBookingDto;
 
-    // Check if room still exists and is available
     const room = await this.roomModel.findById(roomId);
     if (!room) {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
 
-    const isAvailable = await this.isIndividualRoomAvailable(roomId, checkIn, checkOut);
-    if (!isAvailable) {
-      throw new HttpException('Room is no longer available for the selected dates', HttpStatus.BAD_REQUEST);
+    const bookingNumber = await this.generateBookingNumber();
+    const session = await this.connection.startSession();
+    let booking: any;
+    try {
+      await session.withTransaction(async () => {
+        const overlap = await this.bookingModel.countDocuments({
+          roomId,
+          bookingStatus: { $nin: ['CANCELLED'] },
+          $or: [{ checkIn: { $lt: new Date(checkOut) }, checkOut: { $gt: new Date(checkIn) } }],
+        }, { session });
+
+        if (overlap > 0) {
+          throw new HttpException('Room is no longer available for the selected dates', HttpStatus.BAD_REQUEST);
+        }
+
+        booking = new this.bookingModel({
+          roomId,
+          guestInfo: { ...guestInfo, specialRequests: specialRequests || '' },
+          checkIn: new Date(checkIn),
+          checkOut: new Date(checkOut),
+          adults: parseInt(adults),
+          children: parseInt(children),
+          totalAmount: parseFloat(totalAmount),
+          paymentMethod: 'CASH',
+          paymentStatus: 'PENDING',
+          bookingStatus: 'CONFIRMED',
+          bookingNumber,
+          depositAmount: depositAmount != null ? parseFloat(depositAmount) : 0,
+          depositPaid: depositPaid === true || depositPaid === 'true',
+          depositPaidAt: (depositPaid === true || depositPaid === 'true') ? new Date() : null,
+        });
+        await booking.save({ session });
+      });
+    } finally {
+      await session.endSession();
     }
-
-    // Generate booking number manually for cash booking
-    const year = new Date().getFullYear();
-    const lastBooking = await this.bookingModel.findOne(
-      { 
-        bookingNumber: { $regex: `^AST-${year}-` }
-      },
-      { bookingNumber: 1 }
-    ).sort({ bookingNumber: -1 });
-    
-    let nextNumber = 1;
-    if (lastBooking && lastBooking.bookingNumber) {
-      const lastNumber = parseInt(lastBooking.bookingNumber.split('-')[2]);
-      nextNumber = lastNumber + 1;
-    }
-    
-    const bookingNumber = `AST-${year}-${String(nextNumber).padStart(3, '0')}`;
-    console.log('Generated cash booking number:', bookingNumber);
-
-    // Create booking
-    const booking = new this.bookingModel({
-      roomId,
-      guestInfo: {
-        ...guestInfo,
-        specialRequests: specialRequests || ''
-      },
-      checkIn: new Date(checkIn),
-      checkOut: new Date(checkOut),
-      adults: parseInt(adults),
-      children: parseInt(children),
-      totalAmount: parseFloat(totalAmount),
-      paymentMethod: 'CASH',
-      paymentStatus: 'PENDING',
-      bookingStatus: 'CONFIRMED',
-      bookingNumber: bookingNumber,
-      depositAmount: depositAmount != null ? parseFloat(depositAmount) : 0,
-      depositPaid: depositPaid === true || depositPaid === 'true',
-      depositPaidAt: (depositPaid === true || depositPaid === 'true') ? new Date() : null,
-    });
-
-    await booking.save();
-    console.log('Cash booking saved successfully, bookingNumber:', booking.bookingNumber);
-    
-    // TODO: Send confirmation email when email service is available
-    console.log('Email service not yet implemented in NestJS');
 
     return {
       message: 'Cash booking created successfully',
-      booking
+      booking,
     };
   }
 
@@ -300,16 +277,25 @@ export class PaymentsService {
     };
   }
 
-  private getEffectivePrice(room: any, checkInDate: Date, totalGuests: number): number {
-    if (!room.seasonalPricing || room.seasonalPricing.length === 0) {
-      return room.price;
-    }
-    const match = room.seasonalPricing.find((period: any) => {
-      const start = new Date(period.startDate);
-      const end = new Date(period.endDate);
-      return checkInDate >= start && checkInDate <= end;
-    });
-    if (!match) return room.price;
+  private async generateBookingNumber(): Promise<string> {
+    const year = new Date().getFullYear();
+    const counter = await this.bookingModel.db
+      .collection('counters')
+      .findOneAndUpdate(
+        { _id: `booking:${year}` as any },
+        { $inc: { seq: 1 } },
+        { upsert: true, returnDocument: 'after' },
+      );
+    return `AST-${year}-${String(counter.seq).padStart(3, '0')}`;
+  }
+
+  private async getEffectivePrice(roomId: Types.ObjectId, checkInDate: Date, totalGuests: number, basePrice: number): Promise<number> {
+    const match = await this.seasonalPricingModel.findOne({
+      roomId,
+      startDate: { $lte: checkInDate },
+      endDate: { $gte: checkInDate },
+    }).lean();
+    if (!match) return basePrice;
     if (match.pricingByOccupancy && match.pricingByOccupancy.length > 0) {
       const occupancyMatch = match.pricingByOccupancy
         .filter((p: any) => p.guests <= totalGuests)
@@ -319,21 +305,4 @@ export class PaymentsService {
     return match.price;
   }
 
-  private async isIndividualRoomAvailable(roomId: string, checkIn: string, checkOut: string): Promise<boolean> {
-    const checkInDate = new Date(checkIn);
-    const checkOutDate = new Date(checkOut);
-
-    const existingBookings = await this.bookingModel.find({
-      roomId: roomId,
-      $or: [
-        {
-          checkIn: { $lt: checkOutDate },
-          checkOut: { $gt: checkInDate }
-        }
-      ],
-      bookingStatus: { $nin: ['CANCELLED'] }
-    });
-
-    return existingBookings.length === 0;
-  }
 }

@@ -24,6 +24,8 @@ export class ImagesController {
   constructor(private readonly cloudinaryService: CloudinaryService) {}
 
   @Post('upload')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @RequireAdmin()
   @UseInterceptors(
     FilesInterceptor('images', 10, {
       storage: memoryStorage(),
@@ -74,6 +76,8 @@ export class ImagesController {
   }
 
   @Delete(':publicId')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @RequireAdmin()
   async deleteFile(@Param('publicId') publicId: string) {
     try {
       await this.cloudinaryService.deleteFile(publicId);

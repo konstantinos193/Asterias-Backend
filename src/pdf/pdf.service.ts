@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Model } from 'mongoose';
 import { InjectModel } from '@nestjs/mongoose';
 import { Booking, BookingDocument } from '../models/booking.model';
@@ -17,7 +17,7 @@ export class PdfService {
     const booking = await this.bookingModel.findById(bookingId).populate('roomId').exec();
     
     if (!booking) {
-      throw new Error('Booking not found');
+      throw new NotFoundException('Booking not found');
     }
 
     const room = booking.roomId as any; // Type assertion since populate returns mixed type

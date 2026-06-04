@@ -103,42 +103,6 @@ export class Room {
   available: boolean;
 
   @ApiProperty()
-  @Prop({
-    type: [{
-      _id: { type: String },
-      startDate: { type: Date, required: true },
-      endDate: { type: Date, required: true },
-      reason: { type: String, default: '' }
-    }],
-    default: []
-  })
-  blockedDates: { _id: string; startDate: Date; endDate: Date; reason?: string }[];
-
-  @ApiProperty()
-  @Prop({
-    type: [{
-      _id: { type: String },
-      name: { type: String, required: true },
-      startDate: { type: Date, required: true },
-      endDate: { type: Date, required: true },
-      price: { type: Number, required: true, min: 0 },
-      pricingByOccupancy: {
-        type: [{ guests: Number, price: Number }],
-        default: []
-      }
-    }],
-    default: []
-  })
-  seasonalPricing: {
-    _id: string;
-    name: string;
-    startDate: Date;
-    endDate: Date;
-    price: number;
-    pricingByOccupancy: { guests: number; price: number }[];
-  }[];
-
-  @ApiProperty()
   @Prop({ default: null })
   image: string;
 
@@ -175,6 +139,14 @@ export const RoomSchema = SchemaFactory.createForClass(Room);
 
 // Index for better query performance
 RoomSchema.index({ capacity: 1 });
+RoomSchema.index({ available: 1 });
+RoomSchema.index({ available: 1, capacity: 1 });
+RoomSchema.index({ nameKey: 1 }, { unique: true });
+RoomSchema.index({ roomType: 1 });
+RoomSchema.index({ roomType: 1, available: 1, sortOrder: 1 });
+RoomSchema.index({ sortOrder: 1 });
+RoomSchema.index({ source: 1 });
+RoomSchema.index({ bookingcom_room_id: 1 }, { sparse: true });
 
 // Virtual for average rating
 RoomSchema.virtual('averageRating').get(function(this: RoomDocument) {

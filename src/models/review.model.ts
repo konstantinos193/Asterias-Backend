@@ -89,20 +89,6 @@ export class Review {
   @ApiProperty()
   @Prop({ default: 0 })
   reportCount: number;
-
-  @ApiProperty()
-  @Prop({ required: false, type: [{
-    date: Date,
-    action: String,
-    user: String,
-    details: String
-  }] })
-  moderationHistory?: Array<{
-    date: Date;
-    action: string;
-    user: string;
-    details: string;
-  }>;
 }
 
 export const ReviewSchema = SchemaFactory.createForClass(Review);
@@ -113,7 +99,12 @@ ReviewSchema.index({ reviewDate: -1 });
 ReviewSchema.index({ source: 1 });
 ReviewSchema.index({ visible: 1 });
 ReviewSchema.index({ featured: 1 });
+ReviewSchema.index({ source: 1, visible: 1 });
+ReviewSchema.index({ visible: 1, featured: 1 });
+ReviewSchema.index({ sentiment: 1 });
 ReviewSchema.index({ reviewerName: 'text', reviewText: 'text' });
+ReviewSchema.index({ source: 1, reviewDate: -1 });
+ReviewSchema.index({ visible: 1, reviewDate: -1 });
 
 // Virtual for average rating calculation
 ReviewSchema.virtual('summary').get(function(this: ReviewDocument) {

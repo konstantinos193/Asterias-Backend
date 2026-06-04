@@ -2,11 +2,16 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { InjectModel } from '@nestjs/mongoose';
 import { User, UserModel } from './models/user.model';
-import { ConfigService } from '@nestjs/config';
 
 async function seedSuperAdmin() {
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminPassword) {
+    console.error('❌ ADMIN_PASSWORD env var is required — aborting seed');
+    process.exit(1);
+  }
+
   console.log('🌱 Starting database seeding...');
-  
+
   // Create a minimal NestJS application context
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn'], // Only show errors and warnings during seeding
@@ -15,7 +20,6 @@ async function seedSuperAdmin() {
   try {
     // Get the User model directly from Mongoose
     const userModel = app.get<any>('UserModel');
-    const configService = app.get(ConfigService);
 
     // Check if superadmin already exists
     const existingAdmin = await userModel.findByEmail('admin@asteriashome.gr');
@@ -30,7 +34,7 @@ async function seedSuperAdmin() {
       name: 'Super Admin',
       username: 'superadmin',
       email: 'admin@asteriashome.gr',
-      password: 'admin1',
+      password: adminPassword,
       role: 'ADMIN' as const,
       isActive: true,
       preferences: {
@@ -46,7 +50,6 @@ async function seedSuperAdmin() {
     const superAdmin = await userModel.createAdmin(superAdminData);
     console.log('✅ Superadmin user created successfully');
     console.log(`📧 Email: ${superAdmin.email}`);
-    console.log(`🔑 Password: admin1`);
     console.log(`👤 Name: ${superAdmin.name}`);
     console.log(`🆔 ID: ${superAdmin._id}`);
 

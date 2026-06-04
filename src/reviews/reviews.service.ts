@@ -45,17 +45,15 @@ export class ReviewsService {
     if (visible !== undefined) filter.visible = visible;
     if (featured !== undefined) filter.featured = featured;
 
-    // Add search filter
+    // Use the text index instead of per-field $regex scans
     if (search) {
-      filter.$or = [
-        { reviewerName: { $regex: search, $options: 'i' } },
-        { reviewText: { $regex: search, $options: 'i' } }
-      ];
+      filter.$text = { $search: search };
     }
 
-    // Build sort
-    const sort: any = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    // When searching by text, rank by relevance score; otherwise honour the caller's sort.
+    const sort: any = search
+      ? { score: { $meta: 'textScore' } }
+      : { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
 
     // Pagination
     const skip = (page - 1) * limit;
@@ -63,6 +61,7 @@ export class ReviewsService {
     const [reviews, total] = await Promise.all([
       this.reviewModel
         .find(filter)
+        .select(search ? { score: { $meta: 'textScore' } } : {})
         .sort(sort)
         .skip(skip)
         .limit(limit),
@@ -109,11 +108,11 @@ export class ReviewsService {
     return review;
   }
 
-  async importGoogleReviews(importData: ImportReviewsDto): Promise<{ 
-    imported: number; 
-    updated: number; 
-    skipped: number; 
-    errors: string[] 
+  async importGoogleReviews(importData: ImportReviewsDto): Promise<{
+    imported: number;
+    updated: number;
+    skipped: number;
+    errors: string[]
   }> {
     const { reviews, overwriteExisting = false } = importData;
     let imported = 0;
@@ -121,37 +120,39 @@ export class ReviewsService {
     let skipped = 0;
     const errors: string[] = [];
 
-    for (const reviewData of reviews) {
+    const withSourceId = reviews.filter(r => r.sourceId);
+    const withoutSourceId = reviews.filter(r => !r.sourceId);
+
+    // Bulk upsert for reviews that have a dedup key (sourceId)
+    if (withSourceId.length > 0) {
       try {
-        // Check if review already exists (by source and sourceId)
-        if (reviewData.sourceId) {
-          const existingReview = await this.reviewModel.findOne({
-            source: 'google',
-            sourceId: reviewData.sourceId
-          });
+        const ops = withSourceId.map(reviewData => ({
+          updateOne: {
+            filter: { source: 'google', sourceId: reviewData.sourceId },
+            update: overwriteExisting
+              ? { $set: { ...reviewData, source: 'google', visible: true, verified: false } }
+              : { $setOnInsert: { ...reviewData, source: 'google', visible: true, verified: false } },
+            upsert: true,
+          },
+        }));
+        const result = await this.reviewModel.bulkWrite(ops as any, { ordered: false });
+        imported += result.upsertedCount;
+        updated += result.modifiedCount;
+        skipped += withSourceId.length - result.upsertedCount - result.modifiedCount;
+      } catch (error: any) {
+        errors.push(`Bulk import failed: ${error.message}`);
+      }
+    }
 
-          if (existingReview) {
-            if (overwriteExisting) {
-              await this.reviewModel.updateOne(
-                { _id: existingReview._id },
-                reviewData
-              );
-              updated++;
-            } else {
-              skipped++;
-            }
-            continue;
-          }
-        }
-
-        // Create new review
+    // Insert reviews without sourceId individually (no dedup possible)
+    for (const reviewData of withoutSourceId) {
+      try {
         const review = new this.reviewModel({
           ...reviewData,
           source: 'google',
           visible: true,
-          verified: false
+          verified: false,
         });
-        
         await review.save();
         imported++;
       } catch (error: any) {
@@ -228,7 +229,8 @@ export class ReviewsService {
       .find({ visible: true })
       .sort({ reviewDate: -1 })
       .limit(limit)
-      .exec();
+      .lean()
+      .exec() as unknown as Review[];
   }
 
   async getFeaturedReviews(limit = 5): Promise<Review[]> {
@@ -236,7 +238,8 @@ export class ReviewsService {
       .find({ visible: true, featured: true })
       .sort({ reviewDate: -1 })
       .limit(limit)
-      .exec();
+      .lean()
+      .exec() as unknown as Review[];
   }
 
   async toggleFeatured(id: string): Promise<Review> {
@@ -271,34 +274,29 @@ export class ReviewsService {
   }
 
   async getSentimentAnalysis(): Promise<any> {
-    const reviews = await this.reviewModel.find({ visible: true }).select('rating reviewText');
-    
-    let positive = 0;
-    let neutral = 0;
-    let negative = 0;
-    
-    reviews.forEach(review => {
-      if (review.rating >= 4) {
-        positive++;
-      } else if (review.rating === 3) {
-        neutral++;
-      } else {
-        negative++;
-      }
-    });
-    
-    const total = reviews.length;
-    
+    const [result] = await this.reviewModel.aggregate([
+      { $match: { visible: true } },
+      {
+        $group: {
+          _id: null,
+          positive: { $sum: { $cond: [{ $gte: ['$rating', 4] }, 1, 0] } },
+          neutral:  { $sum: { $cond: [{ $eq:  ['$rating', 3] }, 1, 0] } },
+          negative: { $sum: { $cond: [{ $lte: ['$rating', 2] }, 1, 0] } },
+          total:    { $sum: 1 },
+        },
+      },
+    ]);
+
+    if (!result) {
+      return { positive: 0, neutral: 0, negative: 0, distribution: { positive: 0, neutral: 0, negative: 0, total: 0 } };
+    }
+
+    const { positive, neutral, negative, total } = result;
     return {
-      positive: total > 0 ? Math.round((positive / total) * 100) : 0,
-      neutral: total > 0 ? Math.round((neutral / total) * 100) : 0,
-      negative: total > 0 ? Math.round((negative / total) * 100) : 0,
-      distribution: {
-        positive,
-        neutral,
-        negative,
-        total
-      }
+      positive: Math.round((positive / total) * 100),
+      neutral:  Math.round((neutral  / total) * 100),
+      negative: Math.round((negative / total) * 100),
+      distribution: { positive, neutral, negative, total },
     };
   }
 }

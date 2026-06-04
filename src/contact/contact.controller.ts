@@ -33,7 +33,8 @@ export class ContactController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all contacts' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiOperation({ summary: 'Get all contacts (admin only)' })
   @ApiQuery({ name: 'status', description: 'Filter by status', required: false })
   @ApiQuery({ name: 'priority', description: 'Filter by priority', required: false })
   @ApiQuery({ name: 'assignedTo', description: 'Filter by assigned user', required: false })
@@ -42,6 +43,8 @@ export class ContactController {
   @ApiQuery({ name: 'sortBy', description: 'Sort field', required: false })
   @ApiQuery({ name: 'sortOrder', description: 'Sort order (asc/desc)', required: false })
   @ApiResponse({ status: 200, description: 'Contacts retrieved successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - admin access required' })
   async getContacts(@Query() query: any) {
     return await this.contactService.getContacts(query);
   }

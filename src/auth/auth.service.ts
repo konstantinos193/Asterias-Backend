@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -15,24 +15,11 @@ export class AuthService {
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
-    console.log('🔍 NestJS AuthService.validateUser called with:', { email, passwordLength: password?.length });
-    
     const user = await this.userModel.findByEmail(email);
-    console.log('🔍 User found:', user ? { 
-      id: user._id, 
-      email: user.email, 
-      username: user.username, 
-      role: user.role,
-      isActive: user.isActive 
-    } : 'null');
-    
     if (user && await user.comparePassword(password)) {
-      console.log('🔍 Password validation successful');
       const { password, ...result } = user.toObject();
       return result;
     }
-    
-    console.log('🔍 Password validation failed or user not found');
     return null;
   }
 
@@ -60,12 +47,19 @@ export class AuthService {
     });
 
     if (existingUser) {
-      throw new UnauthorizedException('User with this email or username already exists');
+      throw new ConflictException('User with this email or username already exists');
     }
 
     // Create user with password - the pre-save hook will hash it
     const user = new this.userModel(userData);
-    await user.save();
+    try {
+      await user.save();
+    } catch (err: any) {
+      if (err.code === 11000) {
+        throw new ConflictException('User with this email or username already exists');
+      }
+      throw err;
+    }
 
     // Log the user in after registration
     return this.login(user);

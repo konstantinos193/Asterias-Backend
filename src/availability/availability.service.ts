@@ -13,6 +13,9 @@ import {
 
 @Injectable()
 export class AvailabilityService {
+  private calendarCache = new Map<string, { data: any; timestamp: number }>();
+  private readonly CALENDAR_CACHE_TTL_MS = 5 * 60_000;
+
   constructor(
     @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
     @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>
@@ -42,6 +45,10 @@ export class AvailabilityService {
     return await calculateMonthlyAvailability(this.roomModel, this.bookingModel, roomId, monthDate);
   }
 
+  invalidateCalendarCache(month: number, year: number) {
+    this.calendarCache.delete(`${year}-${month}`);
+  }
+
   async getCalendarAvailability(month?: number, year?: number) {
     let monthDate: Date;
     if (month && year) {
@@ -50,7 +57,13 @@ export class AvailabilityService {
       monthDate = new Date();
     }
 
-    const monthlyAvailability = await calculateMonthlyAggregatedAvailability(this.bookingModel, monthDate);
+    const cacheKey = `${monthDate.getFullYear()}-${monthDate.getMonth() + 1}`;
+    const cached = this.calendarCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < this.CALENDAR_CACHE_TTL_MS) {
+      return cached.data;
+    }
+
+    const monthlyAvailability = await calculateMonthlyAggregatedAvailability(this.roomModel, this.bookingModel, monthDate);
     
     // Transform data for frontend calendar
     const calendarData = {};
@@ -66,35 +79,35 @@ export class AvailabilityService {
       };
     });
 
-    return {
+    const result = {
       month: monthDate.getMonth() + 1,
       year: monthDate.getFullYear(),
       availability: calendarData
     };
+    this.calendarCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
   }
 
   async getAvailabilityOverview() {
     const today = new Date();
     const nextWeek = new Date(today);
     nextWeek.setDate(nextWeek.getDate() + 7);
-    
-    const overview = {
-      today: await calculateDateAvailability(this.roomModel, this.bookingModel, today),
-      nextWeek: await calculateDateAvailability(this.roomModel, this.bookingModel, nextWeek),
-      totalRooms: 7, // Total Standard Apartments
-      availableToday: 0,
-      bookedToday: 0
+
+    const [todayData, nextWeekData, totalRooms] = await Promise.all([
+      calculateDateAvailability(this.roomModel, this.bookingModel, today),
+      calculateDateAvailability(this.roomModel, this.bookingModel, nextWeek),
+      this.roomModel.countDocuments({ available: true }),
+    ]);
+
+    const availableToday = todayData.filter(r => r.isAvailable).length;
+    const bookedToday = todayData.filter(r => !r.isAvailable).length;
+
+    return {
+      today: todayData,
+      nextWeek: nextWeekData,
+      totalRooms,
+      availableToday,
+      bookedToday,
     };
-
-    // Calculate today's stats
-    overview.today.forEach(room => {
-      if (room.isAvailable) {
-        overview.availableToday += room.availableNights;
-      } else {
-        overview.bookedToday += room.bookedNights;
-      }
-    });
-
-    return overview;
   }
 }

@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import { Booking, BookingDocument, BookingModel } from '../models/booking.model';
+import { BookingHistory, BookingHistoryDocument } from '../models/booking-history.model';
 import { Room, RoomDocument } from '../models/room.model';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
@@ -14,7 +15,9 @@ import { RoomCombinationRequestDto, MultiRoomBookingDto } from './dto/room-combi
 export class BookingsService {
   constructor(
     @InjectModel(Booking.name) private bookingModel: BookingModel,
+    @InjectModel(BookingHistory.name) private bookingHistoryModel: Model<BookingHistoryDocument>,
     @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
+    @InjectConnection() private connection: Connection,
     private emailService: EmailService,
     private roomCombinationService: RoomCombinationService
   ) {}
@@ -32,15 +35,15 @@ export class BookingsService {
     const filter: any = {};
     if (params?.status) {
       filter.bookingStatus = params.status.toUpperCase();
-    }2
+    }
 
     const [bookings, total] = await Promise.all([
-      this.bookingModel.find(filter).populate('roomId').sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.bookingModel.find(filter).populate('roomId', 'name roomType price images').sort({ createdAt: -1 }).skip(skip).limit(limit).lean().exec(),
       this.bookingModel.countDocuments(filter),
     ]);
 
     return {
-      bookings,
+      bookings: bookings as unknown as Booking[],
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     };
   }
@@ -56,12 +59,12 @@ export class BookingsService {
     }
 
     const [bookings, total] = await Promise.all([
-      this.bookingModel.find(filter).populate('roomId').sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.bookingModel.find(filter).populate('roomId', 'name roomType price images').sort({ createdAt: -1 }).skip(skip).limit(limit).lean().exec(),
       this.bookingModel.countDocuments(filter),
     ]);
 
     return {
-      bookings,
+      bookings: bookings as unknown as Booking[],
       pagination: {
         page,
         limit,
@@ -83,29 +86,27 @@ export class BookingsService {
     const status = (booking as any).bookingStatus as string;
     if (status === 'CANCELLED') return booking as unknown as Booking;
 
-    return this.bookingModel.findByIdAndUpdate(
-      bookingId,
-      {
-        bookingStatus: 'CANCELLED',
-        cancelledAt: new Date(),
-        $push: {
-          history: {
-            date: new Date(),
-            action: 'Booking cancelled by guest',
-            user: 'Guest',
-          },
-        },
-      },
-      { returnDocument: 'after' },
-    ).exec();
+    const [updated] = await Promise.all([
+      this.bookingModel.findByIdAndUpdate(
+        bookingId,
+        { bookingStatus: 'CANCELLED', cancelledAt: new Date() },
+        { returnDocument: 'after' },
+      ).exec(),
+      this.bookingHistoryModel.create({
+        bookingId: new Types.ObjectId(bookingId),
+        action: 'Booking cancelled by guest',
+        user: 'Guest',
+      }),
+    ]);
+    return updated;
   }
 
   async findAll(): Promise<Booking[]> {
-    return this.bookingModel.find().populate('roomId').populate('userId').exec();
+    return this.bookingModel.find().populate('roomId', 'name roomType price').populate('userId', 'name email').sort({ createdAt: -1 }).limit(500).lean().exec() as Promise<Booking[]>;
   }
 
   async findOne(id: string): Promise<Booking | null> {
-    return this.bookingModel.findById(id).populate('roomId').populate('userId').exec();
+    return this.bookingModel.findById(id).populate('roomId', 'name roomType price capacity amenities').populate('userId', 'name email phone').exec();
   }
 
   async update(id: string, updateBookingDto: UpdateBookingDto): Promise<Booking | null> {
@@ -123,7 +124,7 @@ export class BookingsService {
   async checkAvailability(roomId: string, checkIn: Date, checkOut: Date): Promise<boolean> {
     const room = await this.roomModel.findById(roomId);
     if (!room) {
-      throw new Error('Room not found');
+      throw new NotFoundException('Room not found');
     }
     
     const booked = await this.bookingModel.countDocuments({
@@ -143,11 +144,11 @@ export class BookingsService {
     const booking = await this.bookingModel.findById(id).populate('roomId');
     
     if (!booking) {
-      throw new Error('Booking not found');
+      throw new NotFoundException('Booking not found');
     }
 
     if (!booking.guestInfo || !booking.guestInfo.email) {
-      throw new Error('Guest email not found');
+      throw new BadRequestException('Guest email not found');
     }
 
     // Use the proper EmailService methods
@@ -199,18 +200,15 @@ export class BookingsService {
         });
         break;
       default:
-        throw new Error('Invalid email type');
+        throw new BadRequestException('Invalid email type');
     }
 
     if (emailResult.success) {
-      // Add to booking history
-      if (!booking.history) booking.history = [];
-      booking.history.push({
-        date: new Date(),
+      await this.bookingHistoryModel.create({
+        bookingId: (booking as any)._id,
         action: `Αποστολή email: ${sendEmailDto.emailType === 'confirmation' ? 'Επιβεβαίωση' : sendEmailDto.emailType === 'reminder' ? 'Υπενθύμιση' : 'Προσωπικό μήνυμα'}`,
-        user: 'Διαχειριστής'
+        user: 'Διαχειριστής',
       });
-      await booking.save();
 
       return { 
         success: true, 
@@ -218,7 +216,7 @@ export class BookingsService {
         emailType: sendEmailDto.emailType
       };
     } else {
-      throw new Error('Failed to send email');
+      throw new BadRequestException('Failed to send email');
     }
   }
 
@@ -239,65 +237,79 @@ export class BookingsService {
   }
 
   /**
-   * Create multi-room booking
+   * Create multi-room booking — all sub-bookings in a single transaction so a
+   * mid-loop failure cannot leave orphaned documents.
    */
   async createMultiRoomBooking(multiRoomBookingDto: MultiRoomBookingDto): Promise<Booking[]> {
-    const { combination, checkIn, checkOut, guestFirstName, guestLastName, guestEmail, guestPhone, specialRequests, language, paymentMethod, totalAmount } = multiRoomBookingDto;
+    const { combination, checkIn, checkOut, guestFirstName, guestLastName, guestEmail, guestPhone, specialRequests, language, paymentMethod } = multiRoomBookingDto;
 
-    const bookings: Booking[] = [];
     const baseBookingNumber = await this.generateBookingNumber();
+    const session = await this.connection.startSession();
 
-    for (let i = 0; i < combination.rooms.length; i++) {
-      const room = combination.rooms[i];
-      
-      for (let j = 0; j < room.count; j++) {
-        const bookingNumber = combination.rooms.length > 1 ? `${baseBookingNumber}-${String.fromCharCode(65 + i)}${j + 1}` : baseBookingNumber;
-        
-        const bookingData = {
-          bookingNumber,
-          roomId: new (require('mongoose').Types.ObjectId)(room.roomId),
-          guestInfo: {
-            firstName: guestFirstName,
-            lastName: guestLastName,
-            email: guestEmail,
-            phone: guestPhone,
-            specialRequests: specialRequests || '',
-            language: language || 'en'
-          },
-          checkIn: new Date(checkIn),
-          checkOut: new Date(checkOut),
-          adults: Math.min(room.occupancy, 2), // Simple split, can be improved
-          children: Math.max(0, room.occupancy - 2),
-          totalAmount: room.totalPrice / room.count,
-          paymentMethod,
-          paymentStatus: 'PENDING' as const,
-          bookingStatus: 'CONFIRMED' as const,
-          notes: `Part of multi-room booking ${baseBookingNumber}. Room ${i + 1} of ${combination.rooms.length}.`,
-          roomCombination: combination
-        };
+    try {
+      let bookings: Booking[] = [];
 
-        const booking = new this.bookingModel(bookingData);
-        bookings.push(await booking.save());
-      }
+      await session.withTransaction(async () => {
+        bookings = [];
+
+        for (let i = 0; i < combination.rooms.length; i++) {
+          const room = combination.rooms[i];
+
+          for (let j = 0; j < room.count; j++) {
+            const bookingNumber = combination.rooms.length > 1
+              ? `${baseBookingNumber}-${String.fromCharCode(65 + i)}${j + 1}`
+              : baseBookingNumber;
+
+            const bookingData = {
+              bookingNumber,
+              roomId: new Types.ObjectId(room.roomId),
+              guestInfo: {
+                firstName: guestFirstName,
+                lastName: guestLastName,
+                email: guestEmail,
+                phone: guestPhone,
+                specialRequests: specialRequests || '',
+                language: language || 'en',
+              },
+              checkIn: new Date(checkIn),
+              checkOut: new Date(checkOut),
+              adults: Math.min(room.occupancy, 2),
+              children: Math.max(0, room.occupancy - 2),
+              totalAmount: room.totalPrice / room.count,
+              paymentMethod,
+              paymentStatus: 'PENDING' as const,
+              bookingStatus: 'CONFIRMED' as const,
+              notes: `Part of multi-room booking ${baseBookingNumber}. Room ${i + 1} of ${combination.rooms.length}.`,
+              roomCombination: combination,
+            };
+
+            const booking = new this.bookingModel(bookingData);
+            bookings.push(await booking.save({ session }));
+          }
+        }
+
+        if (bookings.length > 1) {
+          const parentBooking = bookings[0] as BookingDocument;
+          const childBookingIds = bookings.slice(1).map(b => (b as BookingDocument)._id);
+
+          await this.bookingModel.updateMany(
+            { _id: { $in: childBookingIds } },
+            { parentBookingId: parentBooking._id },
+            { session },
+          );
+
+          await this.bookingModel.findByIdAndUpdate(
+            parentBooking._id,
+            { childBookingIds },
+            { session },
+          );
+        }
+      });
+
+      return bookings;
+    } finally {
+      await session.endSession();
     }
-
-    // Link bookings together
-    if (bookings.length > 1) {
-      const parentBooking = bookings[0] as BookingDocument;
-      const childBookingIds = bookings.slice(1).map(b => (b as BookingDocument)._id);
-      
-      await this.bookingModel.updateMany(
-        { _id: { $in: childBookingIds } },
-        { parentBookingId: parentBooking._id }
-      );
-      
-      await this.bookingModel.findByIdAndUpdate(
-        parentBooking._id,
-        { childBookingIds }
-      );
-    }
-
-    return bookings;
   }
 
   /**
@@ -307,24 +319,15 @@ export class BookingsService {
     return this.roomCombinationService.findBestRoom(adults, children, checkIn, checkOut);
   }
 
-  /**
-   * Generate unique booking number
-   */
   private async generateBookingNumber(): Promise<string> {
-    const prefix = 'AST';
-    const date = new Date();
-    const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    
-    let bookingNumber = `${prefix}${dateStr}${random}`;
-    
-    // Ensure uniqueness
-    const existing = await this.bookingModel.findOne({ bookingNumber });
-    if (existing) {
-      // Add a suffix if collision occurs
-      bookingNumber += Math.floor(Math.random() * 100);
-    }
-    
-    return bookingNumber;
+    const year = new Date().getFullYear();
+    const counter = await this.bookingModel.db
+      .collection('counters')
+      .findOneAndUpdate(
+        { _id: `booking:${year}` as any },
+        { $inc: { seq: 1 } },
+        { upsert: true, returnDocument: 'after' },
+      );
+    return `AST-${year}-${String(counter.seq).padStart(3, '0')}`;
   }
 }
