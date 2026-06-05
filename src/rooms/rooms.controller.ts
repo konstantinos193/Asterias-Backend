@@ -108,6 +108,14 @@ export class RoomsController {
     return this.roomsService.updateRoomAvailability(id, available);
   }
 
+  @Get('admin/:id/block')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiOperation({ summary: 'Get blocked dates for a room' })
+  @ApiResponse({ status: 200, description: 'Blocked dates retrieved successfully' })
+  getBlockedDates(@Param('id', MongoObjectIdPipe) id: string) {
+    return this.roomsService.getBlockedDates(id);
+  }
+
   @Post('admin/:id/block')
   @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Block dates for a room' })

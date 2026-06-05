@@ -618,7 +618,12 @@ export class AdminService {
       throw new NotFoundException('Room not found');
     }
 
-    return { room };
+    const blockedDates = await this.roomBlockedDateModel
+      .find({ roomId: room._id })
+      .sort({ startDate: 1 })
+      .lean();
+
+    return { room: { ...room, blockedDates } };
   }
 
   async createRoom(roomData: any) {

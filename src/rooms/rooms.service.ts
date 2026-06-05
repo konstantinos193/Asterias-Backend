@@ -169,6 +169,13 @@ export class RoomsService {
     return { ...room, blockedDates };
   }
 
+  async getBlockedDates(roomId: string): Promise<any[]> {
+    return this.roomBlockedDateModel
+      .find({ roomId: new Types.ObjectId(roomId) })
+      .sort({ startDate: 1 })
+      .lean();
+  }
+
   async updateRoomAvailability(roomId: string, available: boolean): Promise<Room> {
     const room = await this.roomModel.findByIdAndUpdate(
       roomId,
