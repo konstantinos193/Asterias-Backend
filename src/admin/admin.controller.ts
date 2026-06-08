@@ -451,6 +451,46 @@ export class AdminController {
     }
   }
 
+  // ── Seasonal pricing (property-wide, per room type) ──
+  @Get('seasonal')
+  async getSeasonalPricing() {
+    try {
+      return await this.adminService.getSeasonalPricing();
+    } catch (error) {
+      throw new HttpException('Failed to get seasonal pricing', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  @Post('seasonal')
+  async createSeasonalPricing(@Body() body: any) {
+    try {
+      return await this.adminService.createSeasonalPricing(body);
+    } catch (error: any) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(error?.message || 'Failed to create seasonal period', HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  @Put('seasonal/:id')
+  async updateSeasonalPricing(@Param('id', MongoObjectIdPipe) id: string, @Body() body: any) {
+    try {
+      return await this.adminService.updateSeasonalPricing(id, body);
+    } catch (error: any) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(error?.message || 'Failed to update seasonal period', HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  @Delete('seasonal/:id')
+  async deleteSeasonalPricing(@Param('id', MongoObjectIdPipe) id: string) {
+    try {
+      return await this.adminService.deleteSeasonalPricing(id);
+    } catch (error: any) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(error?.message || 'Failed to delete seasonal period', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
   @Get('users')
   async getUsers(
     @Query('page') page?: string,

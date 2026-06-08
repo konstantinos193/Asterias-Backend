@@ -7,15 +7,19 @@ import { RoomBlockedDate, RoomBlockedDateSchema } from '../models/room-blocked-d
 import { Booking, BookingSchema } from '../models/booking.model';
 import { ChannelConfig, ChannelConfigSchema } from '../models/channel-config.model';
 import { Offer, OfferSchema } from '../models/offer.model';
+import { PricingModule } from '../pricing/pricing.module';
 
 @Module({
-  imports: [MongooseModule.forFeature([
-    { name: Room.name, schema: RoomSchema },
-    { name: RoomBlockedDate.name, schema: RoomBlockedDateSchema },
-    { name: Booking.name, schema: BookingSchema },
-    { name: ChannelConfig.name, schema: ChannelConfigSchema },
-    { name: Offer.name, schema: OfferSchema },
-  ])],
+  imports: [
+    MongooseModule.forFeature([
+      { name: Room.name, schema: RoomSchema },
+      { name: RoomBlockedDate.name, schema: RoomBlockedDateSchema },
+      { name: Booking.name, schema: BookingSchema },
+      { name: ChannelConfig.name, schema: ChannelConfigSchema },
+      { name: Offer.name, schema: OfferSchema },
+    ]),
+    PricingModule,
+  ],
   controllers: [RoomsController],
   providers: [RoomsService],
   exports: [RoomsService],

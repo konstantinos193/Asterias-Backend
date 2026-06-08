@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, NotFoundException, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, NotFoundException, BadRequestException, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { RoomsService } from './rooms.service';
+import { PricingService } from '../pricing/pricing.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { CreateRoomDto } from './dto/create-room.dto';
@@ -10,7 +11,10 @@ import { MongoObjectIdPipe } from '../common/pipes/mongodb-object-id.pipe';
 @ApiTags('rooms')
 @Controller('rooms')
 export class RoomsController {
-  constructor(private readonly roomsService: RoomsService) {}
+  constructor(
+    private readonly roomsService: RoomsService,
+    private readonly pricingService: PricingService,
+  ) {}
 
   @Post()
   @UseGuards(JwtAuthGuard, AdminGuard)
@@ -44,6 +48,25 @@ export class RoomsController {
   @ApiResponse({ status: 200, description: 'Available rooms retrieved successfully' })
   findAvailable(@Param('checkIn') checkIn: string, @Param('checkOut') checkOut: string) {
     return this.roomsService.findAvailable(checkIn, checkOut);
+  }
+
+  @Get(':id/quote')
+  @ApiOperation({ summary: 'Quote a stay for a room (seasonal-aware, per night)' })
+  @ApiResponse({ status: 200, description: 'Stay quote computed successfully' })
+  async quoteStay(
+    @Param('id', MongoObjectIdPipe) id: string,
+    @Query('checkIn') checkIn: string,
+    @Query('checkOut') checkOut: string,
+    @Query('adults') adults?: string,
+    @Query('children') children?: string,
+  ) {
+    if (!checkIn || !checkOut) {
+      throw new BadRequestException('checkIn and checkOut are required');
+    }
+    const quote = await this.pricingService.quoteStay(id, checkIn, checkOut, adults ?? '1', children ?? '0');
+    const guests = (parseInt(adults ?? '1') || 0) + (parseInt(children ?? '0') || 0);
+    const taxes = await this.pricingService.applyTaxes(quote.subtotal, quote.nights, guests);
+    return { ...quote, taxes, total: Math.round(taxes.total * 100) / 100 };
   }
 
   @Patch(':id')

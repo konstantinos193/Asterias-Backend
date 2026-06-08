@@ -10,6 +10,7 @@ import { Room, RoomSchema } from '../models/room.model';
 import { RoomBlockedDate, RoomBlockedDateSchema } from '../models/room-blocked-date.model';
 import { Contact, ContactSchema } from '../models/contact.model';
 import { User, UserSchema } from '../models/user.model';
+import { SeasonalPricing, SeasonalPricingSchema } from '../models/seasonal-pricing.model';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { User, UserSchema } from '../models/user.model';
       { name: RoomBlockedDate.name, schema: RoomBlockedDateSchema },
       { name: Contact.name, schema: ContactSchema },
       { name: User.name, schema: UserSchema },
+      { name: SeasonalPricing.name, schema: SeasonalPricingSchema },
     ]),
     AuthModule,
     OffersModule,

@@ -1,10 +1,10 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
-import { Connection, Model, Types } from 'mongoose';
+import { Connection, Model } from 'mongoose';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Room, RoomSchema } from '../models/room.model';
 import { Booking, BookingSchema } from '../models/booking.model';
-import { RoomSeasonalPricing, RoomSeasonalPricingDocument } from '../models/room-seasonal-pricing.model';
 import { SettingsService } from '../settings/settings.service';
+import { PricingService } from '../pricing/pricing.service';
 import Stripe from 'stripe';
 
 @Injectable()
@@ -14,9 +14,9 @@ export class PaymentsService {
   constructor(
     @InjectModel('Room') private roomModel: Model<Room>,
     @InjectModel('Booking') private bookingModel: Model<Booking>,
-    @InjectModel(RoomSeasonalPricing.name) private seasonalPricingModel: Model<RoomSeasonalPricingDocument>,
     @InjectConnection() private connection: Connection,
     private settingsService: SettingsService,
+    private pricingService: PricingService,
   ) {
     this.stripe = process.env.STRIPE_SECRET_KEY
       ? new Stripe(process.env.STRIPE_SECRET_KEY)
@@ -57,11 +57,11 @@ export class PaymentsService {
     // Calculate total amount
     const checkInDate = new Date(checkIn);
     const checkOutDate = new Date(checkOut);
-    const nights = Math.ceil((checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24));
 
-    // Use seasonal pricing if a period covers the stay dates
-    const effectivePrice = await this.getEffectivePrice((room as any)._id, checkInDate, parseInt(adults) + parseInt(children || 0), (room as any).price);
-    let basePrice = nights * effectivePrice;
+    // Seasonal-aware, per-night pricing (single source of truth)
+    const quote = await this.pricingService.quoteStay(room, checkInDate, checkOutDate, adults, children);
+    const nights = quote.nights;
+    let basePrice = quote.subtotal;
     let discountAmount = 0;
     let appliedOffer = null;
 
@@ -102,13 +102,14 @@ export class PaymentsService {
         children: children,
         nights: nights,
         offerId: offerId || '',
-        originalPrice: (nights * effectivePrice).toFixed(2),
+        originalPrice: basePrice.toFixed(2),
         discountAmount: discountAmount.toFixed(2),
         finalPrice: basePrice.toFixed(2),
         vatAmount: vatAmount.toFixed(2),
         municipalFee: municipalFee.toFixed(2),
         environmentalTax: environmentalTax.toFixed(2),
         totalGuests: totalGuests.toString(),
+        seasonalBreakdown: JSON.stringify(quote.perNight.map(n => ({ d: n.date, p: n.price, s: n.source }))).slice(0, 480),
       }
     });
 
@@ -118,7 +119,7 @@ export class PaymentsService {
       amount: totalAmount / 100,
       currency: currency,
       appliedOffer: appliedOffer,
-      originalPrice: nights * effectivePrice,
+      originalPrice: basePrice,
       discountAmount: discountAmount,
       finalPrice: basePrice,
       vatAmount: parseFloat(vatAmount.toFixed(2)),
@@ -220,6 +221,16 @@ export class PaymentsService {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
 
+    // Cash is collected in person, so we honour the caller's amount (admins may
+    // enter a negotiated total, and the public wizard already sends the
+    // seasonal-aware displayed price). Only when no/invalid amount is supplied
+    // do we fall back to the server-computed seasonal room subtotal.
+    let resolvedTotal = parseFloat(totalAmount);
+    if (!Number.isFinite(resolvedTotal) || resolvedTotal <= 0) {
+      const quote = await this.pricingService.quoteStay(room, new Date(checkIn), new Date(checkOut), adults, children);
+      resolvedTotal = quote.subtotal;
+    }
+
     const bookingNumber = await this.generateBookingNumber();
     const session = await this.connection.startSession();
     let booking: any;
@@ -242,7 +253,7 @@ export class PaymentsService {
           checkOut: new Date(checkOut),
           adults: parseInt(adults),
           children: parseInt(children),
-          totalAmount: parseFloat(totalAmount),
+          totalAmount: resolvedTotal,
           paymentMethod: 'CASH',
           paymentStatus: 'PENDING',
           bookingStatus: 'CONFIRMED',
@@ -287,22 +298,6 @@ export class PaymentsService {
         { upsert: true, returnDocument: 'after' },
       );
     return `AST-${year}-${String(counter.seq).padStart(3, '0')}`;
-  }
-
-  private async getEffectivePrice(roomId: Types.ObjectId, checkInDate: Date, totalGuests: number, basePrice: number): Promise<number> {
-    const match = await this.seasonalPricingModel.findOne({
-      roomId,
-      startDate: { $lte: checkInDate },
-      endDate: { $gte: checkInDate },
-    }).lean();
-    if (!match) return basePrice;
-    if (match.pricingByOccupancy && match.pricingByOccupancy.length > 0) {
-      const occupancyMatch = match.pricingByOccupancy
-        .filter((p: any) => p.guests <= totalGuests)
-        .sort((a: any, b: any) => b.guests - a.guests)[0];
-      if (occupancyMatch) return occupancyMatch.price;
-    }
-    return match.price;
   }
 
 }

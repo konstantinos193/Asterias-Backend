@@ -6,6 +6,7 @@ import { Room } from '../models/room.model';
 import { RoomBlockedDate, RoomBlockedDateDocument } from '../models/room-blocked-date.model';
 import { Contact } from '../models/contact.model';
 import { User, UserDocument } from '../models/user.model';
+import { SeasonalPricing, SeasonalPricingDocument } from '../models/seasonal-pricing.model';
 import { OffersService } from '../offers/offers.service';
 import { SettingsService } from '../settings/settings.service';
 import Stripe from 'stripe';
@@ -20,6 +21,7 @@ export class AdminService {
     @InjectModel(RoomBlockedDate.name) private roomBlockedDateModel: Model<RoomBlockedDateDocument>,
     @InjectModel('Contact') private contactModel: Model<Contact>,
     @InjectModel('User') private userModel: Model<UserDocument>,
+    @InjectModel(SeasonalPricing.name) private seasonalModel: Model<SeasonalPricingDocument>,
     private offersService: OffersService,
     private settingsService: SettingsService,
   ) {
@@ -700,6 +702,70 @@ export class AdminService {
       message: `Offer ${offer.active ? 'activated' : 'deactivated'} successfully`,
       offer
     };
+  }
+
+  // ── Seasonal pricing (property-wide, per room type) ──────────────────────────
+
+  private normalizeSeasonalInput(body: any) {
+    const name = typeof body?.name === 'string' ? body.name.trim() : '';
+    if (!name) throw new BadRequestException('Name is required');
+
+    const start = new Date(body?.startDate);
+    const end = new Date(body?.endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      throw new BadRequestException('Valid start and end dates are required');
+    }
+    // Store as midnight UTC of the calendar day (matches PricingService).
+    const startDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+    const endDate = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+    if (endDate.getTime() < startDate.getTime()) {
+      throw new BadRequestException('End date must be on or after start date');
+    }
+
+    const prices: { '2beds'?: number; '3beds'?: number; '4beds'?: number } = {};
+    for (const key of ['2beds', '3beds', '4beds'] as const) {
+      const raw = body?.prices?.[key];
+      if (raw !== undefined && raw !== null && raw !== '') {
+        const num = Number(raw);
+        if (isNaN(num) || num < 0) throw new BadRequestException(`Invalid price for ${key}`);
+        prices[key] = num;
+      }
+    }
+    if (prices['2beds'] === undefined && prices['3beds'] === undefined && prices['4beds'] === undefined) {
+      throw new BadRequestException('Set at least one price (2beds / 3beds / 4beds)');
+    }
+
+    const result: any = { name, startDate, endDate, prices };
+    if (body?.priority !== undefined && body?.priority !== null && body?.priority !== '') {
+      const p = Number(body.priority);
+      if (!isNaN(p)) result.priority = p;
+    }
+    if (body?.active !== undefined) result.active = body.active === true || body.active === 'true';
+    return result;
+  }
+
+  async getSeasonalPricing() {
+    const periods = await this.seasonalModel.find().sort({ startDate: 1 }).lean();
+    return { periods };
+  }
+
+  async createSeasonalPricing(body: any) {
+    const data = this.normalizeSeasonalInput(body);
+    const period = await this.seasonalModel.create(data);
+    return { message: 'Seasonal period created successfully', period };
+  }
+
+  async updateSeasonalPricing(id: string, body: any) {
+    const data = this.normalizeSeasonalInput(body);
+    const period = await this.seasonalModel.findByIdAndUpdate(id, data, { new: true }).lean();
+    if (!period) throw new NotFoundException('Seasonal period not found');
+    return { message: 'Seasonal period updated successfully', period };
+  }
+
+  async deleteSeasonalPricing(id: string) {
+    const deleted = await this.seasonalModel.findByIdAndDelete(id).lean();
+    if (!deleted) throw new NotFoundException('Seasonal period not found');
+    return { message: 'Seasonal period deleted successfully' };
   }
 
   async getUsers(params: {

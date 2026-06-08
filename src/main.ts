@@ -20,9 +20,10 @@ async function bootstrap() {
   app.use(helmet());
   app.use(cookieParser());
 
-  // Request logging middleware
+  // Request logging middleware + keep the API out of search indexes
   app.use((req, res, next) => {
     console.log(`🔍 ${req.method} ${req.url} - Origin: ${req.headers.origin || 'No origin'}`);
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     next();
   });
 
