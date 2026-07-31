@@ -19,7 +19,7 @@ const SettingsSchema = new Schema({
   overbookingAllowed: { type: Boolean, default: false },
   currency: { type: String, default: 'EUR' },
   taxRate: { type: Number, default: 13 },
-  municipalFee: { type: Number, default: 0.50 },
+  municipalFee: { type: Number, default: 2.00 },
   environmentalTax: { type: Number, default: 2.00 },
   automaticPricing: { type: Boolean, default: false },
   directBookingDiscount: { type: Number, default: 5 },

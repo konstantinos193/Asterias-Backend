@@ -1,9 +1,9 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
-import { Connection, Model } from 'mongoose';
+import { ClientSession, Connection, Model } from 'mongoose';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Room, RoomSchema } from '../models/room.model';
 import { Booking, BookingSchema } from '../models/booking.model';
-import { SettingsService } from '../settings/settings.service';
+import { RoomBlockedDate, RoomBlockedDateDocument } from '../models/room-blocked-date.model';
 import { PricingService } from '../pricing/pricing.service';
 import Stripe from 'stripe';
 
@@ -14,8 +14,9 @@ export class PaymentsService {
   constructor(
     @InjectModel('Room') private roomModel: Model<Room>,
     @InjectModel('Booking') private bookingModel: Model<Booking>,
+    @InjectModel(RoomBlockedDate.name)
+    private roomBlockedDateModel: Model<RoomBlockedDateDocument>,
     @InjectConnection() private connection: Connection,
-    private settingsService: SettingsService,
     private pricingService: PricingService,
   ) {
     this.stripe = process.env.STRIPE_SECRET_KEY
@@ -45,14 +46,7 @@ export class PaymentsService {
     }
 
     // Quick availability check (full atomic check happens at booking creation time)
-    const overlap = await this.bookingModel.countDocuments({
-      roomId,
-      bookingStatus: { $nin: ['CANCELLED'] },
-      $or: [{ checkIn: { $lt: new Date(checkOut) }, checkOut: { $gt: new Date(checkIn) } }],
-    });
-    if (overlap > 0) {
-      throw new HttpException('Room is not available for the selected dates', HttpStatus.BAD_REQUEST);
-    }
+    await this.assertUnitAvailable(roomId, room.totalRooms, new Date(checkIn), new Date(checkOut));
 
     // Calculate total amount
     const checkInDate = new Date(checkIn);
@@ -68,15 +62,14 @@ export class PaymentsService {
     // Apply offer discount if offerId is provided
     // TODO: apply offer discount (offerId present but offer logic not yet implemented)
 
-    // Load tax rates from settings (fallback to defaults if not configured)
-    const settings = await this.settingsService.getSettings();
-    const vatRate = (settings?.taxRate ?? 13) / 100;
-    const municipalFee = (settings?.municipalFee ?? 2.00) * nights;
+    // Taxes come from PricingService — the SAME code path that backs
+    // GET /rooms/:id/quote, which is what the booking wizard displays. Never
+    // duplicate this math here: divergence between the two is a guest overcharge.
     const totalGuests = parseInt(adults) + parseInt(children || 0);
-    const environmentalTax = (settings?.environmentalTax ?? 2.00) * nights * Math.max(totalGuests, 1);
+    const { vatAmount, municipalFee, environmentalTax, total } =
+      await this.pricingService.applyTaxes(basePrice, nights, totalGuests);
 
-    const vatAmount = basePrice * vatRate;
-    const totalAmount = Math.round((basePrice + vatAmount + municipalFee + environmentalTax) * 100); // Convert to cents
+    const totalAmount = Math.round(total * 100); // Convert to cents
 
     if (totalAmount <= 0) {
       throw new HttpException('Invalid amount', HttpStatus.BAD_REQUEST);
@@ -154,8 +147,19 @@ export class PaymentsService {
       offerId,
       originalPrice,
       discountAmount,
-      finalPrice
+      finalPrice,
+      vatAmount,
+      municipalFee,
+      environmentalTax,
     } = paymentIntent.metadata;
+
+    // The breakdown recorded on the PaymentIntent when the guest was quoted.
+    // Stored on the booking so the admin panel can show what the total is made
+    // of without re-deriving it from rates that may since have changed.
+    const num = (v?: string) => {
+      const n = parseFloat(v ?? '');
+      return Number.isFinite(n) ? n : null;
+    };
 
     // Check if room still exists
     const room = await this.roomModel.findById(roomId);
@@ -174,15 +178,13 @@ export class PaymentsService {
     let booking: any;
     try {
       await session.withTransaction(async () => {
-        const overlap = await this.bookingModel.countDocuments({
+        await this.assertUnitAvailable(
           roomId,
-          bookingStatus: { $nin: ['CANCELLED'] },
-          $or: [{ checkIn: { $lt: new Date(checkOut) }, checkOut: { $gt: new Date(checkIn) } }],
-        }, { session });
-
-        if (overlap > 0) {
-          throw new HttpException('Room is no longer available for the selected dates', HttpStatus.BAD_REQUEST);
-        }
+          room.totalRooms,
+          new Date(checkIn),
+          new Date(checkOut),
+          session,
+        );
 
         booking = new this.bookingModel({
           roomId,
@@ -192,14 +194,15 @@ export class PaymentsService {
           adults: parseInt(adults),
           children: parseInt(children),
           totalAmount: paymentIntent.amount / 100,
+          roomSubtotal: num(originalPrice),
+          vatAmount: num(vatAmount),
+          municipalFee: num(municipalFee),
+          environmentalTax: num(environmentalTax),
           paymentMethod: 'CARD',
           paymentStatus: 'PAID',
           bookingStatus: 'CONFIRMED',
           stripePaymentIntentId: paymentIntentId,
           bookingNumber,
-          offerId: offerId || undefined,
-          originalPrice: parseFloat(originalPrice) || undefined,
-          discountAmount: parseFloat(discountAmount) || undefined,
         });
         await booking.save({ session });
       });
@@ -221,30 +224,46 @@ export class PaymentsService {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
 
+    // Price the stay server-side either way: an omitted amount must fall back to
+    // the tax-inclusive total (the pre-tax subtotal is not what a guest pays),
+    // and we need the breakdown to record on the booking.
+    const quote = await this.pricingService.quoteStay(room, new Date(checkIn), new Date(checkOut), adults, children);
+    const cashGuests = (parseInt(String(adults)) || 0) + (parseInt(String(children)) || 0);
+    const taxes = await this.pricingService.applyTaxes(quote.subtotal, quote.nights, cashGuests);
+
     // Cash is collected in person, so we honour the caller's amount (admins may
-    // enter a negotiated total, and the public wizard already sends the
-    // seasonal-aware displayed price). Only when no/invalid amount is supplied
-    // do we fall back to the server-computed seasonal room subtotal.
+    // enter a negotiated total, and the public wizard sends the same total the
+    // guest was shown).
     let resolvedTotal = parseFloat(totalAmount);
     if (!Number.isFinite(resolvedTotal) || resolvedTotal <= 0) {
-      const quote = await this.pricingService.quoteStay(room, new Date(checkIn), new Date(checkOut), adults, children);
-      resolvedTotal = quote.subtotal;
+      resolvedTotal = taxes.total;
     }
+
+    // Only record a breakdown when its lines actually sum to the stored total.
+    // A negotiated admin price is not explained by these figures, and showing
+    // them anyway would put numbers that do not add up in front of the owner.
+    const breakdown =
+      Math.abs(resolvedTotal - taxes.total) < 0.01
+        ? {
+            roomSubtotal: quote.subtotal,
+            vatAmount: taxes.vatAmount,
+            municipalFee: taxes.municipalFee,
+            environmentalTax: taxes.environmentalTax,
+          }
+        : {};
 
     const bookingNumber = await this.generateBookingNumber();
     const session = await this.connection.startSession();
     let booking: any;
     try {
       await session.withTransaction(async () => {
-        const overlap = await this.bookingModel.countDocuments({
+        await this.assertUnitAvailable(
           roomId,
-          bookingStatus: { $nin: ['CANCELLED'] },
-          $or: [{ checkIn: { $lt: new Date(checkOut) }, checkOut: { $gt: new Date(checkIn) } }],
-        }, { session });
-
-        if (overlap > 0) {
-          throw new HttpException('Room is no longer available for the selected dates', HttpStatus.BAD_REQUEST);
-        }
+          room.totalRooms,
+          new Date(checkIn),
+          new Date(checkOut),
+          session,
+        );
 
         booking = new this.bookingModel({
           roomId,
@@ -254,6 +273,7 @@ export class PaymentsService {
           adults: parseInt(adults),
           children: parseInt(children),
           totalAmount: resolvedTotal,
+          ...breakdown,
           paymentMethod: 'CASH',
           paymentStatus: 'PENDING',
           bookingStatus: 'CONFIRMED',
@@ -274,7 +294,11 @@ export class PaymentsService {
     };
   }
 
-  async getPaymentStatus(paymentIntentId: string) {
+  // Explicit return type: inferring it would reference Stripe's internal
+  // PaymentIntent Status union, which is not importable from here.
+  async getPaymentStatus(
+    paymentIntentId: string,
+  ): Promise<{ status: string; amount: number; currency: string }> {
     if (!this.stripe) {
       throw new HttpException('Stripe is not configured. Please set STRIPE_SECRET_KEY in your environment variables.', HttpStatus.INTERNAL_SERVER_ERROR);
     }
@@ -286,6 +310,59 @@ export class PaymentsService {
       amount: paymentIntent.amount / 100,
       currency: paymentIntent.currency
     };
+  }
+
+  /**
+   * A Room document is a room TYPE with `totalRooms` physical units, which is
+   * how BookingsService.checkAvailability has always read it. The payment paths
+   * used to reject as soon as ONE overlapping booking existed, so in high season
+   * every guest after the first was told the room was unavailable and could not
+   * complete a booking. Comparing against the unit count is also correct when a
+   * room really is a single unit (totalRooms = 1).
+   */
+  private async assertUnitAvailable(
+    roomId: string,
+    totalRooms: number,
+    checkIn: Date,
+    checkOut: Date,
+    session?: ClientSession,
+  ): Promise<void> {
+    // Dates the owner closed off. These were only ever filtered out of the room
+    // LISTING, so a guest arriving on a direct booking link could still pay for
+    // a closed period — the overbooking the owner asked us to prevent.
+    // Same overlap rule as RoomsService.findAvailable.
+    const blocked = await this.roomBlockedDateModel.countDocuments(
+      {
+        roomId,
+        startDate: { $lt: checkOut },
+        endDate: { $gt: checkIn },
+      },
+      session ? { session } : {},
+    );
+
+    if (blocked > 0) {
+      throw new HttpException(
+        'Room is not available for the selected dates',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const overlapping = await this.bookingModel.countDocuments(
+      {
+        roomId,
+        bookingStatus: { $nin: ['CANCELLED'] },
+        checkIn: { $lt: checkOut },
+        checkOut: { $gt: checkIn },
+      },
+      session ? { session } : {},
+    );
+
+    if (overlapping >= Math.max(1, totalRooms || 1)) {
+      throw new HttpException(
+        'Room is not available for the selected dates',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 
   private async generateBookingNumber(): Promise<string> {

@@ -23,6 +23,19 @@ export interface StayQuote {
   basePrice: number;
 }
 
+/**
+ * Fallbacks used only when a rate is missing from the settings document.
+ * These MUST stay in sync with the defaults in settings.module.ts — a mismatch
+ * silently charges guests a different amount than the admin panel shows.
+ */
+export const TAX_DEFAULTS = {
+  taxRate: 13, // %
+  municipalFee: 2.0, // € per night
+  environmentalTax: 2.0, // € per guest per night
+} as const;
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 export interface TaxBreakdown {
   vatRate: number;
   vatAmount: number;
@@ -158,11 +171,18 @@ export class PricingService {
    */
   async applyTaxes(subtotal: number, nights: number, guests: number): Promise<TaxBreakdown> {
     const settings = await this.settingsService.getSettings();
-    const vatRate = (settings?.taxRate ?? 13) / 100;
-    const municipalFee = (settings?.municipalFee ?? 2.0) * nights;
-    const environmentalTax = (settings?.environmentalTax ?? 2.0) * nights * Math.max(guests, 1);
-    const vatAmount = subtotal * vatRate;
-    const total = subtotal + vatAmount + municipalFee + environmentalTax;
-    return { vatRate, vatAmount, municipalFee, environmentalTax, total };
+    const vatRate = (settings?.taxRate ?? TAX_DEFAULTS.taxRate) / 100;
+    const municipalFee = (settings?.municipalFee ?? TAX_DEFAULTS.municipalFee) * nights;
+    const environmentalTax =
+      (settings?.environmentalTax ?? TAX_DEFAULTS.environmentalTax) * nights * Math.max(guests, 1);
+    const vatAmount = round2(subtotal * vatRate);
+    const total = round2(subtotal + vatAmount + municipalFee + environmentalTax);
+    return {
+      vatRate,
+      vatAmount,
+      municipalFee: round2(municipalFee),
+      environmentalTax: round2(environmentalTax),
+      total,
+    };
   }
 }

@@ -66,9 +66,29 @@ export class Booking {
   @Prop({ default: 0, min: 0 })
   children: number;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Tax-inclusive amount charged to the guest' })
   @Prop({ required: true, min: 0 })
   totalAmount: number;
+
+  // Price breakdown, frozen at booking time. Rates in settings can change later,
+  // so recomputing a past booking would not reproduce what the guest actually
+  // paid. Null on bookings made before this was recorded, and on admin bookings
+  // with a manually negotiated total.
+  @ApiProperty({ description: 'Pre-tax room subtotal for the whole stay', required: false })
+  @Prop({ default: null })
+  roomSubtotal: number;
+
+  @ApiProperty({ description: 'VAT charged on the room subtotal', required: false })
+  @Prop({ default: null })
+  vatAmount: number;
+
+  @ApiProperty({ description: 'Municipal fee for the whole stay', required: false })
+  @Prop({ default: null })
+  municipalFee: number;
+
+  @ApiProperty({ description: 'Climate resilience fee for the whole stay', required: false })
+  @Prop({ default: null })
+  environmentalTax: number;
 
   @ApiProperty()
   @Prop({ enum: ['CARD', 'CASH'], required: true })

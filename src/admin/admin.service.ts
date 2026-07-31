@@ -757,7 +757,29 @@ export class AdminService {
 
   async updateSeasonalPricing(id: string, body: any) {
     const data = this.normalizeSeasonalInput(body);
-    const period = await this.seasonalModel.findByIdAndUpdate(id, data, { new: true }).lean();
+
+    // Build the update by explicit path. Handing Mongoose a nested `prices`
+    // object turns into $set on dotted paths (prices.2beds …), which MERGES:
+    // a room type the admin cleared keeps its old price and the change looks
+    // like it never saved. Absent types must be $unset, not merely omitted.
+    const $set: Record<string, any> = {
+      name: data.name,
+      startDate: data.startDate,
+      endDate: data.endDate,
+    };
+    if (data.priority !== undefined) $set.priority = data.priority;
+    if (data.active !== undefined) $set.active = data.active;
+
+    const $unset: Record<string, ''> = {};
+    for (const key of ['2beds', '3beds', '4beds'] as const) {
+      if (data.prices[key] !== undefined) $set[`prices.${key}`] = data.prices[key];
+      else $unset[`prices.${key}`] = '';
+    }
+
+    const update: Record<string, any> = { $set };
+    if (Object.keys($unset).length > 0) update.$unset = $unset;
+
+    const period = await this.seasonalModel.findByIdAndUpdate(id, update, { new: true }).lean();
     if (!period) throw new NotFoundException('Seasonal period not found');
     return { message: 'Seasonal period updated successfully', period };
   }
@@ -995,7 +1017,7 @@ export class AdminService {
       overbookingAllowed: false,
       currency: 'EUR',
       taxRate: 13,
-      municipalFee: 0.50,
+      municipalFee: 2.00,
       environmentalTax: 2.00,
       automaticPricing: false,
       directBookingDiscount: 5,
