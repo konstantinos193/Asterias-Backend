@@ -222,6 +222,14 @@
       transform: translateY(-2px);
     }
 
+    /* Reference-only cards: route namespaces with no GET at the base path, and
+       dev-only routes. Documented, but not clickable — no hover affordance. */
+    .card-static:hover {
+      border-color: var(--border);
+      box-shadow: none;
+      transform: none;
+    }
+
     .card-meta {
       display: flex;
       align-items: center;
@@ -256,6 +264,13 @@
       font-size: 0.84rem;
       color: var(--text-muted);
       line-height: 1.55;
+    }
+
+    .card .desc code {
+      font-family: 'Courier New', 'Lucida Console', monospace;
+      font-size: 0.78rem;
+      color: var(--accent);
+      white-space: nowrap;
     }
 
     /* ── Actions ── */
@@ -348,7 +363,7 @@
     <nav>
       <a href="/health">Health</a>
       <a href="/health/database">Database</a>
-      <a href="/api/docs" class="nav-cta">API Docs</a>
+      <a href="/api/rooms" class="nav-cta">Rooms</a>
     </nav>
   </header>
 
@@ -376,13 +391,13 @@
     <p class="section-title">Endpoints</p>
 
     <div class="grid">
-      <a class="card" href="/api/docs">
+      <div class="card card-static" id="docs-card">
         <div class="card-meta">
           <span class="method docs">Swagger</span>
           <span class="path">/api/docs</span>
         </div>
-        <p class="desc">Interactive API documentation with full request and response schemas.</p>
-      </a>
+        <p class="desc" id="docs-desc">Interactive API documentation with full request and response schemas. Mounted in development only.</p>
+      </div>
 
       <a class="card" href="/health">
         <div class="card-meta">
@@ -416,13 +431,13 @@
         <p class="desc">Room listings with descriptions, amenities, and pricing.</p>
       </a>
 
-      <a class="card" href="/api/availability">
+      <div class="card card-static">
         <div class="card-meta">
           <span class="method">GET</span>
-          <span class="path">/api/availability</span>
+          <span class="path">/api/availability/&hellip;</span>
         </div>
-        <p class="desc">Real-time availability calendar across all rooms.</p>
-      </a>
+        <p class="desc">Real-time availability calendar across all rooms. Served under <code>/calendar</code>, <code>/overview</code>, <code>/room/:roomId</code>, and <code>/date/:date</code>.</p>
+      </div>
 
       <a class="card" href="/api/offers">
         <div class="card-meta">
@@ -432,19 +447,19 @@
         <p class="desc">Active promotions and seasonal offers.</p>
       </a>
 
-      <a class="card" href="/api/auth">
+      <div class="card card-static">
         <div class="card-meta">
           <span class="method">POST</span>
-          <span class="path">/api/auth</span>
+          <span class="path">/api/auth/&hellip;</span>
         </div>
-        <p class="desc">Authentication — login, registration, and token management.</p>
-      </a>
+        <p class="desc">Authentication — <code>/login</code>, <code>/register</code>, and <code>/profile</code> for token management.</p>
+      </div>
     </div>
 
     <div class="divider"></div>
 
     <div class="actions">
-      <a class="btn btn-primary" href="/api/docs">Explore API Docs</a>
+      <a class="btn btn-primary" href="/api/rooms">Browse Rooms</a>
       <a class="btn btn-outline" href="/health">Health Check</a>
     </div>
   </main>
@@ -453,7 +468,7 @@
     <span>&copy; <span id="year"></span> <a href="https://adinfinity.gr/" target="_blank" rel="noopener noreferrer">adinfinity</a>. All rights reserved.</span>
     <div class="footer-links">
       <a href="https://asteriashome.gr">asteriashome.gr</a>
-      <a href="/api/docs">API Docs</a>
+      <a href="/api/rooms">Rooms</a>
       <a href="/health">Health</a>
     </div>
   </footer>
