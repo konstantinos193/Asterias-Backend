@@ -12,10 +12,48 @@ class OccupancyPriceDto {
   price: number;
 }
 
+class RoomTranslationDto {
+  @IsString()
+  @IsOptional()
+  name?: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
+}
+
+/**
+ * Per-locale copy. Omitted locales fall back to the English `name`/
+ * `description`, which is what every locale used to render verbatim — the
+ * duplicate-content problem this exists to fix. See Room.translations.
+ */
+class RoomTranslationsDto {
+  @ValidateNested()
+  @Type(() => RoomTranslationDto)
+  @IsOptional()
+  el?: RoomTranslationDto;
+
+  @ValidateNested()
+  @Type(() => RoomTranslationDto)
+  @IsOptional()
+  en?: RoomTranslationDto;
+
+  @ValidateNested()
+  @Type(() => RoomTranslationDto)
+  @IsOptional()
+  de?: RoomTranslationDto;
+}
+
 export class CreateRoomDto {
   @ApiProperty()
   @IsString()
   name: string;
+
+  @ApiProperty({ required: false, type: RoomTranslationsDto })
+  @ValidateNested()
+  @Type(() => RoomTranslationsDto)
+  @IsOptional()
+  translations?: RoomTranslationsDto;
 
   @ApiProperty()
   @IsString()
@@ -102,6 +140,11 @@ export class CreateRoomDto {
   @Type(() => OccupancyPriceDto)
   @IsOptional()
   pricingByOccupancy?: OccupancyPriceDto[];
+
+  @ApiProperty()
+  @IsNumber()
+  @IsOptional()
+  priceAdjustment?: number;
 
   @ApiProperty()
   @IsNumber()

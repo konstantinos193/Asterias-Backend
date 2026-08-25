@@ -18,9 +18,11 @@ const SettingsSchema = new Schema({
   cancellationPolicy: { type: Number, default: 48 },
   overbookingAllowed: { type: Boolean, default: false },
   currency: { type: String, default: 'EUR' },
-  taxRate: { type: Number, default: 13 },
+  // Room rates are quoted VAT-inclusive, so no VAT is added on top; the only
+  // extra a guest owes is €2 per night. Keep in sync with PricingService.TAX_DEFAULTS.
+  taxRate: { type: Number, default: 0 },
   municipalFee: { type: Number, default: 2.00 },
-  environmentalTax: { type: Number, default: 2.00 },
+  environmentalTax: { type: Number, default: 0 },
   automaticPricing: { type: Boolean, default: false },
   directBookingDiscount: { type: Number, default: 5 },
 }, { timestamps: true });

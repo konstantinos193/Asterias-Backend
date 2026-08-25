@@ -27,7 +27,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 type Rates = { taxRate: number; municipalFee: number; environmentalTax: number };
 
 /** Same fallbacks as PricingService.TAX_DEFAULTS. */
-const DEFAULT_RATES: Rates = { taxRate: 13, municipalFee: 0.5, environmentalTax: 2.0 };
+/**
+ * The rates that were IN FORCE when the affected bookings were charged — 13% VAT
+ * plus €2/night plus €2/guest/night. They are pinned here on purpose: the live
+ * settings document has since moved to VAT-inclusive rates with a single
+ * €2/night fee, and reading those back would reconstruct the wrong subtotal for
+ * a booking taken under the old regime.
+ */
+const HISTORICAL_RATES: Rates = { taxRate: 13, municipalFee: 2.0, environmentalTax: 2.0 };
 
 const eur = (n: number) => `€${n.toFixed(2)}`;
 
@@ -68,17 +75,11 @@ async function run() {
   const before = parseBeforeArg();
 
   await mongoose.connect(uri);
-  const settingsCollection = mongoose.connection.collection('settings');
   const bookingsCollection = mongoose.connection.collection('bookings');
 
-  const settings = await settingsCollection.findOne({});
-  const rates: Rates = {
-    taxRate: settings?.taxRate ?? DEFAULT_RATES.taxRate,
-    municipalFee: settings?.municipalFee ?? DEFAULT_RATES.municipalFee,
-    environmentalTax: settings?.environmentalTax ?? DEFAULT_RATES.environmentalTax,
-  };
+  const rates = HISTORICAL_RATES;
 
-  console.log('Rates used (from settings, falling back to defaults):');
+  console.log('Rates used (the regime these bookings were charged under):');
   console.log(
     `  VAT ${rates.taxRate}%  |  municipal ${eur(rates.municipalFee)}/night  |  climate ${eur(rates.environmentalTax)}/guest/night\n`,
   );

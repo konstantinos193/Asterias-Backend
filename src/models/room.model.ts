@@ -22,6 +22,42 @@ export class Room {
   @Prop({ required: true })
   descriptionKey: string;
 
+  /**
+   * Per-locale name and description overrides.
+   *
+   * `name` and `description` above are a single English string that every
+   * locale rendered verbatim, so /el/rooms/<id>, /en/rooms/<id> and
+   * /de/rooms/<id> shipped near-identical bodies. Google treats that as one
+   * page in three places and indexes at most one of them — which is a large
+   * part of why Search Console reports 60 URLs discovered but not indexed.
+   *
+   * `descriptionKey` is not a substitute: every room points at the same generic
+   * key ("rooms.standard.description"), so falling back to it would swap
+   * cross-locale duplication for cross-room duplication.
+   *
+   * Anything omitted here falls back to the English `name`/`description`, so
+   * this is safe to leave empty — it simply keeps the current behaviour for
+   * that locale until real copy is written in the admin panel.
+   */
+  @ApiProperty({
+    required: false,
+    description: 'Per-locale name/description overrides, e.g. { el: { name, description } }',
+  })
+  @Prop({
+    type: {
+      el: { name: { type: String }, description: { type: String } },
+      en: { name: { type: String }, description: { type: String } },
+      de: { name: { type: String }, description: { type: String } },
+    },
+    default: {},
+    _id: false,
+  })
+  translations: {
+    el?: { name?: string; description?: string };
+    en?: { name?: string; description?: string };
+    de?: { name?: string; description?: string };
+  };
+
   @ApiProperty()
   @Prop({ required: true, min: 0 })
   price: number;
@@ -54,9 +90,23 @@ export class Room {
   @Prop({ enum: ['ground', 'upper'], default: 'ground' })
   floor: 'ground' | 'upper';
 
+  /**
+   * Largest occupancy this room is sold at. Descriptive only — the rate a stay
+   * pays is chosen from the GUEST COUNT (see PricingService), because every room
+   * here is the same layout and is sold as a 2-, 3- or 4-bed.
+   */
   @ApiProperty()
   @Prop({ enum: ['2beds', '3beds', '4beds'], required: true })
   roomType: '2beds' | '3beds' | '4beds';
+
+  /**
+   * Flat €/night added on top of whatever rate applies — seasonal or base.
+   * Used for the one room whose balcony has the sea view, so the premium
+   * survives every seasonal period instead of being overwritten by it.
+   */
+  @ApiProperty()
+  @Prop({ default: 0 })
+  priceAdjustment: number;
 
   @ApiProperty()
   @Prop({ type: [String] })
