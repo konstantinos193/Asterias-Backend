@@ -9,6 +9,7 @@ import { User, UserDocument } from '../models/user.model';
 import { SeasonalPricing, SeasonalPricingDocument } from '../models/seasonal-pricing.model';
 import { OffersService } from '../offers/offers.service';
 import { SettingsService } from '../settings/settings.service';
+import { RoomsService } from '../rooms/rooms.service';
 import Stripe from 'stripe';
 
 @Injectable()
@@ -24,6 +25,7 @@ export class AdminService {
     @InjectModel(SeasonalPricing.name) private seasonalModel: Model<SeasonalPricingDocument>,
     private offersService: OffersService,
     private settingsService: SettingsService,
+    private roomsService: RoomsService,
   ) {
     this.stripe = process.env.STRIPE_SECRET_KEY 
       ? new Stripe(process.env.STRIPE_SECRET_KEY)
@@ -631,6 +633,10 @@ export class AdminService {
   async createRoom(roomData: any) {
     const room = new this.roomModel(roomData);
     await room.save();
+    // RoomsService caches findAll() for 60s and only invalidates on writes made
+    // through itself. Without this, the public /api/rooms list keeps serving the
+    // pre-edit inventory after an admin change.
+    this.roomsService.clearRoomsCache();
 
     return room;
   }
@@ -646,15 +652,19 @@ export class AdminService {
       throw new NotFoundException('Room not found');
     }
 
+    this.roomsService.clearRoomsCache();
+
     return room;
   }
 
   async deleteRoom(id: string) {
     const room = await this.roomModel.findByIdAndDelete(id);
-    
+
     if (!room) {
       throw new NotFoundException('Room not found');
     }
+
+    this.roomsService.clearRoomsCache();
 
     return {
       message: 'Room deleted successfully',

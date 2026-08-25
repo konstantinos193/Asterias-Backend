@@ -23,7 +23,15 @@ export class RoomsService {
     @InjectModel(Offer.name) private offerModel: Model<OfferDocument>,
   ) {}
 
-  private clearRoomsCache() {
+  /**
+   * Public because admin edits do not go through this service.
+   *
+   * AdminService.updateRoom writes to the Room model directly, so the 60-second
+   * findAll() cache here kept serving the pre-edit list: the owner would save a
+   * room, reload the site, and see no change for up to a minute. AdminService
+   * now calls this after every room write.
+   */
+  clearRoomsCache() {
     this.roomsCache = null;
   }
 

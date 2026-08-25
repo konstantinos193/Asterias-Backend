@@ -2,6 +2,10 @@ node_modules
 dist
 .git
 pnpm-workspace.yaml
+# Deploy plumbing is not part of the image, and leaving it in the context makes
+# every workflow edit invalidate the COPY . . layer and force a full rebuild.
+.github
+docker-compose.yml
 .env
 .env.*
 !.env.production.example
