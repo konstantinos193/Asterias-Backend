@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MulterModule } from '@nestjs/platform-express';
 import { ImagesController } from './images.controller';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { CloudinaryModule } from '../cloudinary/cloudinary.module';
       },
     }),
     CloudinaryModule,
+    AuthModule,
   ],
   controllers: [ImagesController],
 })

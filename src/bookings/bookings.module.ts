@@ -7,6 +7,7 @@ import { Booking, BookingSchema } from '../models/booking.model';
 import { BookingHistory, BookingHistorySchema } from '../models/booking-history.model';
 import { Room, RoomSchema } from '../models/room.model';
 import { EmailModule } from '../email/email.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -15,7 +16,8 @@ import { EmailModule } from '../email/email.module';
       { name: BookingHistory.name, schema: BookingHistorySchema },
       { name: Room.name, schema: RoomSchema },
     ]),
-    EmailModule
+    EmailModule,
+    AuthModule
   ],
   controllers: [BookingsController],
   providers: [BookingsService, RoomCombinationService],

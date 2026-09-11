@@ -8,6 +8,7 @@ import { Booking, BookingSchema } from '../models/booking.model';
 import { ChannelConfig, ChannelConfigSchema } from '../models/channel-config.model';
 import { Offer, OfferSchema } from '../models/offer.model';
 import { PricingModule } from '../pricing/pricing.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { PricingModule } from '../pricing/pricing.module';
       { name: Offer.name, schema: OfferSchema },
     ]),
     PricingModule,
+    AuthModule,
   ],
   controllers: [RoomsController],
   providers: [RoomsService],

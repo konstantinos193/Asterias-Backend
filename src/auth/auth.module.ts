@@ -9,10 +9,11 @@ import { User, UserSchema } from '../models/user.model';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
 import { AdminGuard } from './guards/admin.guard';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Module({
   imports: [
-    PassportModule,
+    PassportModule.register({ defaultStrategy: 'jwt' }),
     ConfigModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -26,7 +27,7 @@ import { AdminGuard } from './guards/admin.guard';
     MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, LocalStrategy, AdminGuard],
-  exports: [AuthService],
+  providers: [AuthService, JwtStrategy, LocalStrategy, AdminGuard, JwtAuthGuard],
+  exports: [AuthService, AdminGuard, JwtAuthGuard, PassportModule, JwtStrategy],
 })
 export class AuthModule {}

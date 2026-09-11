@@ -3,10 +3,12 @@ import { OffersService } from './offers.service';
 import { OffersController } from './offers.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Offer, OfferSchema } from '../models/offer.model';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Offer.name, schema: OfferSchema }])
+    MongooseModule.forFeature([{ name: Offer.name, schema: OfferSchema }]),
+    AuthModule
   ],
   controllers: [OffersController],
   providers: [OffersService],

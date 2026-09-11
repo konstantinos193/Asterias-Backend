@@ -7,6 +7,7 @@ import { Room, RoomSchema } from '../models/room.model';
 import { RoomBlockedDate, RoomBlockedDateSchema } from '../models/room-blocked-date.model';
 import { SettingsModule } from '../settings/settings.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { PricingModule } from '../pricing/pricing.module';
     ]),
     SettingsModule,
     PricingModule,
+    AuthModule,
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService],
