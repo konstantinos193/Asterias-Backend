@@ -1,8 +1,9 @@
-import { Controller, Post, Body, HttpException, HttpStatus, Get, Param, Res, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, HttpException, HttpStatus, Get, Param, Res, Req, Headers, HttpCode, UseGuards, RawBodyRequest } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentIntentDto } from './dto/create-payment-intent.dto';
 import { ConfirmPaymentDto } from './dto/confirm-payment.dto';
-import { Response } from 'express';
+import { CreateCheckoutSessionDto, ConfirmCheckoutSessionDto } from './dto/create-checkout-session.dto';
+import { Request, Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { RequireAdmin } from '../auth/decorators/require-admin.decorator';
@@ -19,6 +20,38 @@ export class PaymentsController {
     } catch (error: any) {
       return res.status(error.status || 500).json({ error: error.message || 'Failed to create payment intent' });
     }
+  }
+
+  /** Stripe-hosted payment page for a stay. Returns the URL to send the guest to. */
+  @Post('create-checkout-session')
+  async createCheckoutSession(@Body() dto: CreateCheckoutSessionDto, @Headers('origin') origin?: string) {
+    try {
+      return await this.paymentsService.createCheckoutSession(dto, origin);
+    } catch (error: any) {
+      throw new HttpException(
+        { error: error.message || 'Failed to start payment' },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('confirm-checkout-session')
+  async confirmCheckoutSession(@Body() dto: ConfirmCheckoutSessionDto) {
+    try {
+      return await this.paymentsService.confirmCheckoutSession(dto.sessionId);
+    } catch (error: any) {
+      throw new HttpException(
+        { error: error.message || 'Failed to confirm payment' },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /** Books paid stays whose guest never made it back from the Stripe page. */
+  @Post('stripe-webhook')
+  @HttpCode(200)
+  async stripeWebhook(@Req() req: RawBodyRequest<Request>, @Headers('stripe-signature') signature?: string) {
+    return this.paymentsService.handleStripeWebhook(req.rawBody, signature);
   }
 
   @Post('confirm-payment')

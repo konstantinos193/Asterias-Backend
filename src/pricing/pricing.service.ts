@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Room, RoomDocument } from '../models/room.model';
 import { SeasonalPricing, SeasonalPricingDocument } from '../models/seasonal-pricing.model';
+import { Offer, OfferDocument } from '../models/offer.model';
 import { SettingsService } from '../settings/settings.service';
 
 export type RoomType = '2beds' | '3beds' | '4beds';
@@ -22,6 +23,18 @@ export interface StayQuote {
   roomType?: RoomType; // what the room document declares
   rateTier?: RoomType; // the seasonal rate this stay was actually priced at
   basePrice: number;
+}
+
+export interface RateNight {
+  date: string; // YYYY-MM-DD
+  rates: Record<RoomType, { price: number; periodId: string; periodName: string } | null>;
+}
+
+export interface RateCalendar {
+  from: string;
+  days: number;
+  nights: RateNight[];
+  base: Record<RoomType, { min: number; max: number } | null>;
 }
 
 /**
@@ -53,6 +66,24 @@ export interface TaxBreakdown {
   total: number; // subtotal + taxes/fees
 }
 
+export interface AppliedOffer {
+  id: string;
+  title: string;
+  titleKey?: string;
+  discount: number; // % off the room subtotal
+}
+
+/** Why a requested offer was left off the price. */
+export type OfferRejection = 'not_found' | 'inactive' | 'dates' | 'room' | 'min_stay' | 'max_stay';
+
+export interface OfferPricing {
+  offer: AppliedOffer | null;
+  offerRejected?: OfferRejection;
+  originalSubtotal: number;
+  discountAmount: number;
+  subtotal: number; // PRE-TAX room subtotal after the discount
+}
+
 /**
  * Single source of truth for room pricing. Computes the nightly price of a stay,
  * applying property-wide seasonal pricing per room type (with per-night
@@ -64,6 +95,7 @@ export class PricingService {
     @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
     @InjectModel(SeasonalPricing.name)
     private seasonalModel: Model<SeasonalPricingDocument>,
+    @InjectModel(Offer.name) private offerModel: Model<OfferDocument>,
     private settingsService: SettingsService,
   ) {}
 
@@ -103,6 +135,77 @@ export class PricingService {
     return undefined;
   }
 
+  /**
+   * Active periods touching [firstNight, lastNight], in the order they win a
+   * night: explicit priority first, then the SHORTER period, then the newer.
+   * Shorter-first is what lets a special date (15 August) override the season
+   * around it; ordering by creation date let a season added later swallow it.
+   */
+  private async activePeriods(firstNight: Date, lastNight: Date): Promise<any[]> {
+    const periods = await this.seasonalModel
+      .find({
+        active: { $ne: false },
+        startDate: { $lte: lastNight },
+        endDate: { $gte: firstNight },
+      })
+      .lean();
+    const span = (p: any) => new Date(p.endDate).getTime() - new Date(p.startDate).getTime();
+    return periods.sort(
+      (a: any, b: any) =>
+        (b.priority || 0) - (a.priority || 0) ||
+        span(a) - span(b) ||
+        new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(),
+    );
+  }
+
+  /** The first of the (sorted) periods that covers `night` and prices `tier`. */
+  private winningPeriod(periods: any[], night: Date, tier: RoomType): any | undefined {
+    return periods.find((p) => {
+      if (this.seasonalPrice(p, tier) === undefined) return false;
+      const ps = this.toUtcMidnight(new Date(p.startDate)).getTime();
+      const pe = this.toUtcMidnight(new Date(p.endDate)).getTime();
+      return ps <= night.getTime() && night.getTime() <= pe;
+    });
+  }
+
+  /**
+   * The nightly rate for 2, 3 and 4 guests on each of `days` nights from
+   * `from` (YYYY-MM-DD), resolved exactly as quoteStay resolves them. A null
+   * rate means no period applies and each room charges its own base price;
+   * `base` gives the range of those base prices across the rooms.
+   */
+  async rateCalendar(from: string, days: number): Promise<RateCalendar> {
+    const first = new Date(`${from}T00:00:00.000Z`);
+    const last = new Date(first.getTime() + (days - 1) * this.DAY_MS);
+    const [periods, rooms] = await Promise.all([
+      this.activePeriods(first, last),
+      this.roomModel.find().select('price pricingByOccupancy priceAdjustment').lean(),
+    ]);
+
+    const nights: RateNight[] = [];
+    for (let i = 0; i < days; i++) {
+      const night = new Date(first.getTime() + i * this.DAY_MS);
+      const rates = {} as RateNight['rates'];
+      for (const tier of RATE_TIERS) {
+        const p = this.winningPeriod(periods, night, tier);
+        rates[tier] = p
+          ? { price: this.seasonalPrice(p, tier)!, periodId: String(p._id), periodName: p.name }
+          : null;
+      }
+      nights.push({ date: night.toISOString().slice(0, 10), rates });
+    }
+
+    const base = {} as RateCalendar['base'];
+    RATE_TIERS.forEach((tier, i) => {
+      const prices = rooms.map(
+        (r: any) => this.basePerNight(r, i + 2).price + (Number(r.priceAdjustment) || 0),
+      );
+      base[tier] = prices.length ? { min: Math.min(...prices), max: Math.max(...prices) } : null;
+    });
+
+    return { from, days, nights, base };
+  }
+
   /** Base nightly price from the room: occupancy tier if it matches, else base. */
   private basePerNight(room: any, guests: number): { price: number; source: 'occupancy' | 'base' } {
     if (Array.isArray(room.pricingByOccupancy) && room.pricingByOccupancy.length > 0) {
@@ -139,25 +242,8 @@ export class PricingService {
     const adjustment = Number(room.priceAdjustment) || 0;
 
     // Fetch active periods overlapping the stay once, then resolve per night.
-    let periods: any[] = [];
-    if (nights > 0) {
-      const lastNight = new Date(end.getTime() - this.DAY_MS);
-      periods = await this.seasonalModel
-        .find({
-          active: { $ne: false },
-          startDate: { $lte: lastNight },
-          endDate: { $gte: start },
-        })
-        .lean();
-      // Deterministic overlap winner: priority desc, then newest, then narrowest range.
-      periods.sort(
-        (a, b) =>
-          (b.priority || 0) - (a.priority || 0) ||
-          new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime() ||
-          (new Date(a.endDate).getTime() - new Date(a.startDate).getTime()) -
-            (new Date(b.endDate).getTime() - new Date(b.startDate).getTime()),
-      );
-    }
+    const periods =
+      nights > 0 ? await this.activePeriods(start, new Date(end.getTime() - this.DAY_MS)) : [];
 
     const fallback = this.basePerNight(room, guests);
 
@@ -169,13 +255,7 @@ export class PricingService {
       let source: PerNight['source'] = fallback.source;
       let periodName: string | undefined;
 
-      // Highest-priority active period that covers this night AND prices this tier.
-      const covering = periods.find((p) => {
-        if (this.seasonalPrice(p, rateTier) === undefined) return false;
-        const ps = this.toUtcMidnight(new Date(p.startDate)).getTime();
-        const pe = this.toUtcMidnight(new Date(p.endDate)).getTime();
-        return ps <= night.getTime() && night.getTime() <= pe;
-      });
+      const covering = this.winningPeriod(periods, night, rateTier);
       if (covering) {
         price = this.seasonalPrice(covering, rateTier)!;
         source = 'seasonal';
@@ -202,6 +282,70 @@ export class PricingService {
       roomType: room.roomType,
       rateTier,
       basePrice: room.price,
+    };
+  }
+
+  /**
+   * Take an offer's percentage off a stay's pre-tax room subtotal. The quote the
+   * guest is shown and the amount Stripe charges both come through here, so they
+   * agree. Taxes and the per-night stay fee go on the discounted subtotal and are
+   * never discounted themselves.
+   *
+   * An offer that does not fit the stay is left off with the reason, not thrown:
+   * the guest is quoted, and charged, the full price. The rules match
+   * OffersService.validateOfferCode, so the offer pages and the price agree too.
+   */
+  async applyOffer(
+    subtotal: number,
+    roomId: string | Types.ObjectId,
+    checkIn: Date | string,
+    checkOut: Date | string,
+    offerId?: string | null,
+  ): Promise<OfferPricing> {
+    const none = (offerRejected?: OfferRejection): OfferPricing => ({
+      offer: null,
+      offerRejected,
+      originalSubtotal: subtotal,
+      discountAmount: 0,
+      subtotal,
+    });
+    if (!offerId) return none();
+    if (!Types.ObjectId.isValid(offerId)) return none('not_found');
+
+    const offer: any = await this.offerModel.findById(offerId).lean();
+    if (!offer) return none('not_found');
+    if (!offer.active) return none('inactive');
+
+    const start = this.toUtcMidnight(new Date(checkIn));
+    const end = this.toUtcMidnight(new Date(checkOut));
+    if (
+      this.toUtcMidnight(new Date(offer.startDate)) > start ||
+      this.toUtcMidnight(new Date(offer.endDate)) < end
+    ) {
+      return none('dates');
+    }
+
+    const rooms: any[] = offer.applicableRooms || [];
+    if (rooms.length > 0 && !rooms.some((r) => String(r) === String(roomId))) {
+      return none('room');
+    }
+
+    const nights = Math.round((end.getTime() - start.getTime()) / this.DAY_MS);
+    if (offer.minStay && nights < offer.minStay) return none('min_stay');
+    if (offer.maxStay && nights > offer.maxStay) return none('max_stay');
+
+    const percent = Math.min(100, Math.max(0, Number(offer.discount) || 0));
+    const discountAmount = round2((subtotal * percent) / 100);
+    return {
+      offer: {
+        id: String(offer._id),
+        title: offer.title,
+        titleKey: offer.titleKey || undefined,
+        discount: percent,
+      },
+      originalSubtotal: subtotal,
+      discountAmount,
+      subtotal: round2(subtotal - discountAmount),
     };
   }
 

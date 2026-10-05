@@ -74,9 +74,23 @@ export class Booking {
   // so recomputing a past booking would not reproduce what the guest actually
   // paid. Null on bookings made before this was recorded, and on admin bookings
   // with a manually negotiated total.
-  @ApiProperty({ description: 'Pre-tax room subtotal for the whole stay', required: false })
+  @ApiProperty({ description: 'Pre-tax room subtotal for the whole stay, after any offer discount', required: false })
   @Prop({ default: null })
   roomSubtotal: number;
+
+  // Already taken off roomSubtotal: roomSubtotal + discountAmount is the room
+  // price before the offer. The title is copied so a deleted offer still reads.
+  @ApiProperty({ description: 'Offer discount taken off the room subtotal', required: false })
+  @Prop({ default: null })
+  discountAmount: number;
+
+  @ApiProperty({ description: 'Offer applied to the price', required: false })
+  @Prop({ type: Types.ObjectId, ref: 'Offer', default: null })
+  offerId: Types.ObjectId;
+
+  @ApiProperty({ description: 'Offer title at booking time', required: false })
+  @Prop({ default: null })
+  offerTitle: string;
 
   @ApiProperty({ description: 'VAT charged on the room subtotal', required: false })
   @Prop({ default: null })

@@ -6,10 +6,39 @@ import { Booking, BookingSchema } from '../models/booking.model';
 import { RoomBlockedDate, RoomBlockedDateDocument } from '../models/room-blocked-date.model';
 import { PricingService } from '../pricing/pricing.service';
 import Stripe from 'stripe';
+import { refundFields } from './stripe-refunds';
+import {
+  CHECKOUT_LOCALES,
+  CheckoutLocale,
+  SITE_URL,
+  localizedRoomName,
+  publicImageUrl,
+  stayDescription,
+  submitNote,
+} from './checkout-copy';
+
+/** Sites the Stripe page may send the guest back to. */
+const RETURN_ORIGINS = [
+  'https://asteriashome.gr',
+  'https://www.asteriashome.gr',
+  'http://localhost:3000',
+  'http://localhost:3001',
+];
+
+/** Stripe metadata values are capped at 500 characters; longer notes span keys. */
+const META_CHUNK = 500;
+const NOTE_CHUNKS = 4;
 
 @Injectable()
 export class PaymentsService {
   private stripe: InstanceType<typeof Stripe>;
+
+  /**
+   * Bookings being created right now, by PaymentIntent id. The return page and
+   * the webhook usually arrive within the same second for one payment; the
+   * second caller waits for the first instead of racing it to a duplicate.
+   */
+  private readonly bookingInFlight = new Map<string, Promise<any>>();
 
   constructor(
     @InjectModel('Room') private roomModel: Model<Room>,
@@ -48,94 +77,296 @@ export class PaymentsService {
     // Quick availability check (full atomic check happens at booking creation time)
     await this.assertUnitAvailable(roomId, room.totalRooms, new Date(checkIn), new Date(checkOut));
 
-    // Calculate total amount
-    const checkInDate = new Date(checkIn);
-    const checkOutDate = new Date(checkOut);
-
-    // Seasonal-aware, per-night pricing (single source of truth)
-    const quote = await this.pricingService.quoteStay(room, checkInDate, checkOutDate, adults, children);
-    const nights = quote.nights;
-    let basePrice = quote.subtotal;
-    let discountAmount = 0;
-    let appliedOffer = null;
-
-    // Apply offer discount if offerId is provided
-    // TODO: apply offer discount (offerId present but offer logic not yet implemented)
-
-    // Taxes come from PricingService — the SAME code path that backs
-    // GET /rooms/:id/quote, which is what the booking wizard displays. Never
-    // duplicate this math here: divergence between the two is a guest overcharge.
-    const totalGuests = parseInt(adults) + parseInt(children || 0);
-    const { vatAmount, municipalFee, environmentalTax, total } =
-      await this.pricingService.applyTaxes(basePrice, nights, totalGuests);
-
-    const totalAmount = Math.round(total * 100); // Convert to cents
-
-    if (totalAmount <= 0) {
-      throw new HttpException('Invalid amount', HttpStatus.BAD_REQUEST);
-    }
-
-    // Check if amount exceeds Stripe's limit
-    if (totalAmount > 99999999) { // €999,999.99 in cents
-      throw new HttpException('Amount exceeds maximum allowed limit', HttpStatus.BAD_REQUEST);
-    }
+    const priced = await this.priceStay(room, checkIn, checkOut, adults, children, offerId);
 
     // Create payment intent
     const paymentIntent = await this.stripe.paymentIntents.create({
-      amount: totalAmount,
+      amount: priced.amountCents,
       currency: currency,
       automatic_payment_methods: {
         enabled: true,
       },
-      metadata: {
-        roomId: roomId,
-        checkIn: checkIn,
-        checkOut: checkOut,
-        adults: adults,
-        children: children,
-        nights: nights,
-        offerId: offerId || '',
-        originalPrice: basePrice.toFixed(2),
-        discountAmount: discountAmount.toFixed(2),
-        finalPrice: basePrice.toFixed(2),
-        vatAmount: vatAmount.toFixed(2),
-        municipalFee: municipalFee.toFixed(2),
-        environmentalTax: environmentalTax.toFixed(2),
-        totalGuests: totalGuests.toString(),
-        seasonalBreakdown: JSON.stringify(quote.perNight.map(n => ({ d: n.date, p: n.price, s: n.source }))).slice(0, 480),
-      }
+      metadata: priced.metadata,
     });
 
     return {
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
-      amount: totalAmount / 100,
+      amount: priced.amountCents / 100,
       currency: currency,
-      appliedOffer: appliedOffer,
-      originalPrice: basePrice,
-      discountAmount: discountAmount,
-      finalPrice: basePrice,
-      vatAmount: parseFloat(vatAmount.toFixed(2)),
-      municipalFee: parseFloat(municipalFee.toFixed(2)),
-      environmentalTax: parseFloat(environmentalTax.toFixed(2)),
+      appliedOffer: priced.appliedOffer,
+      originalPrice: priced.basePrice,
+      discountAmount: priced.discountAmount,
+      finalPrice: priced.finalPrice,
+      vatAmount: parseFloat(priced.vatAmount.toFixed(2)),
+      municipalFee: parseFloat(priced.municipalFee.toFixed(2)),
+      environmentalTax: parseFloat(priced.environmentalTax.toFixed(2)),
       timestamp: new Date().toISOString()
     };
   }
 
-  async confirmPayment(confirmPaymentDto: any) {
-    if (!this.stripe) {
-      throw new HttpException('Stripe is not configured. Please set STRIPE_SECRET_KEY in your environment variables.', HttpStatus.INTERNAL_SERVER_ERROR);
+  /**
+   * Starts a payment on Stripe's hosted page. The guest's details travel in the
+   * session metadata, so the booking can be created from the session alone:
+   * by the return page, or by the webhook when the guest never comes back.
+   */
+  async createCheckoutSession(dto: any, origin?: string) {
+    this.requireStripe();
+
+    const { roomId, checkIn, checkOut, adults, children = 0, guestInfo, specialRequests, offerId } = dto;
+    const lang: CheckoutLocale = CHECKOUT_LOCALES.includes(dto.language) ? dto.language : 'el';
+
+    const room = await this.roomModel.findById(roomId);
+    if (!room) {
+      throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
+
+    await this.assertUnitAvailable(roomId, room.totalRooms, new Date(checkIn), new Date(checkOut));
+
+    const priced = await this.priceStay(room, checkIn, checkOut, adults, children, offerId);
+    const roomName = localizedRoomName(room, lang);
+    const image = publicImageUrl(room.image || room.images?.[0]);
+
+    const note = String(specialRequests ?? guestInfo.specialRequests ?? '').slice(0, META_CHUNK * NOTE_CHUNKS);
+    const metadata: Record<string, string> = {
+      ...priced.metadata,
+      guestFirstName: guestInfo.firstName,
+      guestLastName: guestInfo.lastName,
+      guestEmail: guestInfo.email,
+      guestPhone: guestInfo.phone,
+      guestLanguage: lang,
+    };
+    for (let i = 0; i * META_CHUNK < note.length; i++) {
+      metadata[`note${i}`] = note.slice(i * META_CHUNK, (i + 1) * META_CHUNK);
+    }
+
+    // Back to the same booking page, so the summary can be rebuilt from the URL.
+    const base = RETURN_ORIGINS.includes(origin)
+      ? origin
+      : (process.env.FRONTEND_URL || SITE_URL).replace(/\/$/, '');
+    const stay = new URLSearchParams({
+      roomId,
+      checkIn,
+      checkOut,
+      adults: String(adults),
+      children: String(children),
+      ...(dto.offerId ? { offerId: dto.offerId } : {}),
+    }).toString();
+
+    const params: Stripe.Checkout.SessionCreateParams = {
+      mode: 'payment',
+      submit_type: 'book',
+      locale: lang,
+      customer_email: guestInfo.email,
+      // Stripe's minimum. Keeps the gap between the availability check above
+      // and the payment short.
+      expires_at: Math.floor(Date.now() / 1000) + 31 * 60,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: 'eur',
+            unit_amount: priced.amountCents,
+            product_data: {
+              name: roomName,
+              description: stayDescription(
+                lang,
+                new Date(checkIn),
+                new Date(checkOut),
+                priced.nights,
+                Number(adults),
+                Number(children) || 0,
+              ),
+              ...(image ? { images: [image] } : {}),
+            },
+          },
+        },
+      ],
+      custom_text: { submit: { message: submitNote(lang) } },
+      branding_settings: {
+        display_name: 'Asterias Homes',
+        // Site palette: sand ground, plum accent (asterias-homes tailwind.config.ts).
+        background_color: '#F5F1E9',
+        button_color: '#8B4B5C',
+        border_style: 'rounded',
+        font_family: 'source_sans_pro',
+        icon: { type: 'url', url: `${SITE_URL}/favicon.png` },
+      },
+      metadata,
+      payment_intent_data: {
+        description: `Asterias Homes · ${roomName} · ${checkIn} → ${checkOut}`,
+        metadata,
+      },
+      success_url: `${base}/${lang}/book?${stay}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${base}/${lang}/book?${stay}&payment=cancelled`,
+    };
+
+    let session: Stripe.Checkout.Session;
+    try {
+      session = await this.stripe.checkout.sessions.create(params);
+    } catch (error: any) {
+      // The look of the page must never cost a booking: if Stripe rejects the
+      // branding or the photo, open the plain page instead.
+      const param: string = error?.param || '';
+      if (!param.startsWith('branding_settings') && !param.includes('images')) throw error;
+      console.error(`Stripe rejected ${param} on checkout, retrying without it:`, error.message);
+      const { branding_settings, ...plain } = params;
+      delete plain.line_items[0].price_data.product_data.images;
+      session = await this.stripe.checkout.sessions.create(plain);
+    }
+
+    return { url: session.url, sessionId: session.id };
+  }
+
+  /** Called by the page Stripe returns the guest to. */
+  async confirmCheckoutSession(sessionId: string) {
+    this.requireStripe();
+
+    const session = await this.stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status !== 'paid') {
+      // Bank transfers and the like complete the page before the money moves;
+      // the webhook books the stay once it does.
+      if (session.status === 'complete') {
+        return { pending: true, message: 'Payment is processing' };
+      }
+      throw new HttpException('Payment not completed', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      return await this.bookCheckoutSession(session);
+    } catch (error: any) {
+      if (!(error instanceof HttpException)) throw error;
+      // Paid, but the stay cannot be booked. 409 tells the page to show the
+      // guest our contact details instead of a retry.
+      console.error(
+        `PAID BUT NOT BOOKED: Stripe session ${session.id}, payment ${session.payment_intent}, ` +
+          `${session.metadata?.guestEmail}: ${error.message}`,
+      );
+      throw new HttpException(error.message, HttpStatus.CONFLICT);
+    }
+  }
+
+  async handleStripeWebhook(rawBody: Buffer | undefined, signature: string | undefined) {
+    this.requireStripe();
+    const secret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!secret) {
+      throw new HttpException('Stripe webhook is not configured', HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    if (!rawBody || !signature) {
+      throw new HttpException('Missing Stripe signature', HttpStatus.BAD_REQUEST);
+    }
+
+    let event: Stripe.Event;
+    try {
+      event = this.stripe.webhooks.constructEvent(rawBody, signature, secret);
+    } catch (error: any) {
+      throw new HttpException(`Invalid Stripe signature: ${error.message}`, HttpStatus.BAD_REQUEST);
+    }
+
+    // Refunds made in the Stripe dashboard: mirror them on the booking so the
+    // admin panel and revenue figures agree with Stripe.
+    if (event.type === 'charge.refunded') {
+      const charge = event.data.object as Stripe.Charge;
+      const paymentIntentId =
+        typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id;
+      if (paymentIntentId) {
+        await this.bookingModel.updateOne({ stripePaymentIntentId: paymentIntentId }, refundFields(charge));
+      }
+      return { received: true };
+    }
+
+    if (
+      event.type !== 'checkout.session.completed' &&
+      event.type !== 'checkout.session.async_payment_succeeded'
+    ) {
+      return { received: true };
+    }
+
+    const session = event.data.object as Stripe.Checkout.Session;
+    if (session.payment_status !== 'paid') {
+      return { received: true };
+    }
+
+    try {
+      await this.bookCheckoutSession(session);
+    } catch (error: any) {
+      // A paid stay that cannot be booked (dates taken meanwhile, room deleted)
+      // will not fix itself on retry; the owner has to sort it out with the guest.
+      // Anything else (database down) is thrown so Stripe retries.
+      if (error instanceof HttpException) {
+        console.error(
+          `PAID BUT NOT BOOKED: Stripe session ${session.id}, payment ${session.payment_intent}, ` +
+            `${session.metadata?.guestEmail}: ${error.message}`,
+        );
+        return { received: true };
+      }
+      throw error;
+    }
+
+    return { received: true };
+  }
+
+  async confirmPayment(confirmPaymentDto: any) {
+    this.requireStripe();
 
     const { paymentIntentId, guestInfo, specialRequests } = confirmPaymentDto;
 
     // Retrieve payment intent from Stripe
     const paymentIntent = await this.stripe.paymentIntents.retrieve(paymentIntentId);
-    
+
     if (paymentIntent.status !== 'succeeded') {
       throw new HttpException('Payment not completed', HttpStatus.BAD_REQUEST);
     }
 
+    return this.bookPaidStay(paymentIntentId, paymentIntent.amount, paymentIntent.metadata, guestInfo, specialRequests);
+  }
+
+  private bookCheckoutSession(session: Stripe.Checkout.Session) {
+    const paymentIntentId =
+      typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id;
+    if (!paymentIntentId) {
+      throw new HttpException('Checkout session has no payment', HttpStatus.BAD_REQUEST);
+    }
+
+    const m = session.metadata || {};
+    const note = Array.from({ length: NOTE_CHUNKS }, (_, i) => m[`note${i}`] || '').join('');
+    const guestInfo = {
+      firstName: m.guestFirstName,
+      lastName: m.guestLastName,
+      email: m.guestEmail,
+      phone: m.guestPhone,
+      language: m.guestLanguage,
+    };
+
+    return this.bookPaidStay(paymentIntentId, session.amount_total, m, guestInfo, note);
+  }
+
+  /** Creates the booking for a successful card payment, once per payment. */
+  private bookPaidStay(
+    paymentIntentId: string,
+    amountCents: number,
+    metadata: Record<string, string>,
+    guestInfo: any,
+    specialRequests?: string,
+  ): Promise<{ message: string; booking: any }> {
+    const running = this.bookingInFlight.get(paymentIntentId);
+    if (running) return running;
+
+    const job = this.createPaidBooking(paymentIntentId, amountCents, metadata, guestInfo, specialRequests).finally(
+      () => this.bookingInFlight.delete(paymentIntentId),
+    );
+    this.bookingInFlight.set(paymentIntentId, job);
+    return job;
+  }
+
+  private async createPaidBooking(
+    paymentIntentId: string,
+    amountCents: number,
+    metadata: Record<string, string>,
+    guestInfo: any,
+    specialRequests?: string,
+  ) {
     // Extract metadata
     const {
       roomId,
@@ -143,15 +374,15 @@ export class PaymentsService {
       checkOut,
       adults,
       children,
-      nights,
-      offerId,
       originalPrice,
-      discountAmount,
       finalPrice,
+      discountAmount,
+      offerId,
+      offerTitle,
       vatAmount,
       municipalFee,
       environmentalTax,
-    } = paymentIntent.metadata;
+    } = metadata;
 
     // The breakdown recorded on the PaymentIntent when the guest was quoted.
     // Stored on the booking so the admin panel can show what the total is made
@@ -193,8 +424,12 @@ export class PaymentsService {
           checkOut: new Date(checkOut),
           adults: parseInt(adults),
           children: parseInt(children),
-          totalAmount: paymentIntent.amount / 100,
-          roomSubtotal: num(originalPrice),
+          totalAmount: amountCents / 100,
+          // finalPrice is the discounted subtotal, the one taxed and charged.
+          roomSubtotal: num(finalPrice) ?? num(originalPrice),
+          discountAmount: num(discountAmount) || null,
+          offerId: offerId || null,
+          offerTitle: offerId ? offerTitle || null : null,
           vatAmount: num(vatAmount),
           municipalFee: num(municipalFee),
           environmentalTax: num(environmentalTax),
@@ -214,6 +449,83 @@ export class PaymentsService {
       message: 'Payment confirmed and booking created successfully',
       booking,
     };
+  }
+
+  /**
+   * Prices a stay for a card payment. Seasonal-aware, per-night pricing and
+   * taxes both come from PricingService — the SAME code path that backs
+   * GET /rooms/:id/quote, which is what the booking wizard displays. Never
+   * duplicate this math here: divergence between the two is a guest overcharge.
+   */
+  private async priceStay(
+    room: any,
+    checkIn: string,
+    checkOut: string,
+    adults: any,
+    children: any,
+    offerId?: string,
+  ) {
+    const quote = await this.pricingService.quoteStay(room, new Date(checkIn), new Date(checkOut), adults, children);
+    const nights = quote.nights;
+    const basePrice = quote.subtotal;
+
+    // An offer that does not fit the stay is dropped here exactly as the quote
+    // drops it, so the guest is charged the price they were shown.
+    const offer = await this.pricingService.applyOffer(basePrice, room._id, checkIn, checkOut, offerId);
+    const finalPrice = offer.subtotal;
+
+    const totalGuests = parseInt(adults) + parseInt(children || 0);
+    const { vatAmount, municipalFee, environmentalTax, total } =
+      await this.pricingService.applyTaxes(finalPrice, nights, totalGuests);
+
+    const amountCents = Math.round(total * 100);
+
+    if (amountCents <= 0) {
+      throw new HttpException('Invalid amount', HttpStatus.BAD_REQUEST);
+    }
+
+    // Check if amount exceeds Stripe's limit
+    if (amountCents > 99999999) { // €999,999.99 in cents
+      throw new HttpException('Amount exceeds maximum allowed limit', HttpStatus.BAD_REQUEST);
+    }
+
+    return {
+      nights,
+      basePrice,
+      appliedOffer: offer.offer,
+      discountAmount: offer.discountAmount,
+      finalPrice,
+      vatAmount,
+      municipalFee,
+      environmentalTax,
+      amountCents,
+      // Read back by createPaidBooking; keep the keys stable.
+      metadata: {
+        roomId: String(room._id),
+        checkIn,
+        checkOut,
+        adults: String(adults),
+        children: String(children || 0),
+        nights: String(nights),
+        offerId: offer.offer?.id ?? '',
+        offerTitle: (offer.offer?.title ?? '').slice(0, 200),
+        offerDiscount: offer.offer ? String(offer.offer.discount) : '',
+        originalPrice: basePrice.toFixed(2),
+        discountAmount: offer.discountAmount.toFixed(2),
+        finalPrice: finalPrice.toFixed(2),
+        vatAmount: vatAmount.toFixed(2),
+        municipalFee: municipalFee.toFixed(2),
+        environmentalTax: environmentalTax.toFixed(2),
+        totalGuests: totalGuests.toString(),
+        seasonalBreakdown: JSON.stringify(quote.perNight.map(n => ({ d: n.date, p: n.price, s: n.source }))).slice(0, 480),
+      } as Record<string, string>,
+    };
+  }
+
+  private requireStripe() {
+    if (!this.stripe) {
+      throw new HttpException('Stripe is not configured. Please set STRIPE_SECRET_KEY in your environment variables.', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
   }
 
   async createCashBooking(createCashBookingDto: any) {

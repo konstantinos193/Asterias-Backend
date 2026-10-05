@@ -12,12 +12,15 @@ import {
   HttpException,
   HttpStatus,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
+import { isDayKey, todayAtProperty } from './occupancy';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { RequireAdmin } from '../auth/decorators/require-admin.decorator';
 import { MongoObjectIdPipe } from '../common/pipes/mongodb-object-id.pipe';
+import { RefundReason } from '../payments/stripe-refunds';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -144,6 +147,33 @@ export class AdminController {
     }
   }
 
+  /** The payment behind a booking, read live from Stripe for card payments. */
+  @Get('bookings/:bookingId/payment')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @RequireAdmin()
+  async getBookingPayment(@Param('bookingId', MongoObjectIdPipe) bookingId: string) {
+    try {
+      return await this.adminService.getBookingPayment(bookingId);
+    } catch (error: any) {
+      throw paymentError(error, 'Failed to load payment');
+    }
+  }
+
+  /** Refunds part or all of a booking's payment without cancelling it. */
+  @Post('bookings/:bookingId/refund')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @RequireAdmin()
+  async refundBooking(
+    @Param('bookingId', MongoObjectIdPipe) bookingId: string,
+    @Body() body: { amount?: number; reason?: RefundReason; note?: string },
+  ) {
+    try {
+      return await this.adminService.refundBooking(bookingId, body);
+    } catch (error: any) {
+      throw paymentError(error, 'Failed to refund');
+    }
+  }
+
   @Put('bookings/:bookingId/cancel')
   @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
@@ -157,13 +187,7 @@ export class AdminController {
       if (error.message === 'Booking not found') {
         throw new HttpException(error.message, HttpStatus.NOT_FOUND);
       }
-      if (error.message.includes('already cancelled') || error.message.includes('Cannot cancel')) {
-        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-      }
-      throw new HttpException(
-        'Failed to cancel booking',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw paymentError(error, 'Failed to cancel booking');
     }
   }
 
@@ -221,6 +245,26 @@ export class AdminController {
       }
       throw new HttpException(
         'Failed to update booking status',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('occupancy')
+  async getOccupancy(
+    @Query('from') from?: string,
+    @Query('days') days?: string,
+  ) {
+    const start = from ?? todayAtProperty();
+    if (!isDayKey(start)) {
+      throw new BadRequestException('from must be a date in YYYY-MM-DD form');
+    }
+    const n = Math.min(Math.max(parseInt(days, 10) || 30, 1), 92);
+    try {
+      return await this.adminService.getOccupancy(start, n);
+    } catch (error) {
+      throw new HttpException(
+        'Failed to get occupancy',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
@@ -461,6 +505,21 @@ export class AdminController {
     }
   }
 
+  // The nightly rate for 2/3/4 guests on each night, as guests are charged it.
+  @Get('seasonal/calendar')
+  async getRateCalendar(@Query('from') from?: string, @Query('days') days?: string) {
+    const start = from ?? todayAtProperty();
+    if (!isDayKey(start)) {
+      throw new BadRequestException('from must be a date in YYYY-MM-DD form');
+    }
+    const n = Math.min(Math.max(parseInt(days, 10) || 42, 1), 92);
+    try {
+      return await this.adminService.getRateCalendar(start, n);
+    } catch (error) {
+      throw new HttpException('Failed to get rate calendar', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
   @Post('seasonal')
   async createSeasonalPricing(@Body() body: any) {
     try {
@@ -666,4 +725,20 @@ export class AdminController {
       throw new HttpException('Failed to update settings', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
+}
+
+/**
+ * Keeps the reason a payment action failed: our own checks are already
+ * HttpExceptions, and Stripe's refusals (amount too high, charge disputed)
+ * carry a message the owner can act on.
+ */
+function paymentError(error: any, fallback: string): HttpException {
+  if (error instanceof HttpException) return error;
+  if (error?.type?.startsWith?.('Stripe')) {
+    return new HttpException(`Stripe: ${error.message}`, HttpStatus.BAD_GATEWAY);
+  }
+  if (error?.message === 'Booking not found') {
+    return new HttpException(error.message, HttpStatus.NOT_FOUND);
+  }
+  return new HttpException(fallback, HttpStatus.INTERNAL_SERVER_ERROR);
 }

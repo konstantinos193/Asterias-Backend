@@ -10,7 +10,15 @@ import { SeasonalPricing, SeasonalPricingDocument } from '../models/seasonal-pri
 import { OffersService } from '../offers/offers.service';
 import { SettingsService } from '../settings/settings.service';
 import { RoomsService } from '../rooms/rooms.service';
+import { OccupancyResult, addDays, buildOccupancy } from './occupancy';
+import { PricingService, RateCalendar } from '../pricing/pricing.service';
 import Stripe from 'stripe';
+import {
+  RefundReason,
+  describeCardPayment,
+  refundCardPayment,
+  refundFields,
+} from '../payments/stripe-refunds';
 
 @Injectable()
 export class AdminService {
@@ -26,6 +34,7 @@ export class AdminService {
     private offersService: OffersService,
     private settingsService: SettingsService,
     private roomsService: RoomsService,
+    private pricingService: PricingService,
   ) {
     this.stripe = process.env.STRIPE_SECRET_KEY 
       ? new Stripe(process.env.STRIPE_SECRET_KEY)
@@ -360,6 +369,114 @@ export class AdminService {
     return booking;
   }
 
+  /**
+   * The payment behind a booking. Card payments are read live from Stripe, so a
+   * refund made in the Stripe dashboard shows here too; the booking is brought
+   * in line with Stripe when the two disagree.
+   */
+  async getBookingPayment(bookingId: string) {
+    const booking = await this.bookingModel.findById(bookingId);
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (booking.paymentMethod === 'CARD' && booking.stripePaymentIntentId) {
+      this.requireStripe();
+      const { summary, charge } = await describeCardPayment(this.stripe, booking.stripePaymentIntentId);
+      const fields = refundFields(charge);
+      if (
+        Math.abs((booking.refundAmount || 0) - fields.refundAmount) >= 0.005 ||
+        (booking.paymentStatus === 'PAID' || booking.paymentStatus === 'REFUNDED') &&
+          booking.paymentStatus !== fields.paymentStatus
+      ) {
+        await this.bookingModel.updateOne({ _id: booking._id }, fields);
+      }
+      return summary;
+    }
+
+    // Cash and manual bookings: nothing to ask Stripe, the booking is the record.
+    const paid = booking.paymentStatus === 'PAID' || booking.paymentStatus === 'REFUNDED';
+    const refunded = booking.refundAmount || 0;
+    return {
+      provider: 'manual' as const,
+      paid,
+      amount: booking.totalAmount || 0,
+      amountRefunded: refunded,
+      refundable: paid ? Math.max(0, (booking.totalAmount || 0) - refunded) : 0,
+      fullyRefunded: booking.paymentStatus === 'REFUNDED',
+    };
+  }
+
+  /**
+   * Refunds part or all of what the guest paid, without cancelling the stay.
+   * Card payments go back through Stripe; for cash the refund is only recorded,
+   * since the money is handed back in person.
+   */
+  async refundBooking(
+    bookingId: string,
+    body: { amount?: number; reason?: RefundReason; note?: string },
+  ) {
+    const booking = await this.bookingModel.findById(bookingId);
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (body.amount != null && !(Number(body.amount) > 0)) {
+      throw new BadRequestException('Enter an amount above zero');
+    }
+
+    let update: Record<string, any>;
+    let refundId: string | null = null;
+
+    if (booking.paymentMethod === 'CARD' && booking.stripePaymentIntentId) {
+      this.requireStripe();
+      const { refund, charge } = await refundCardPayment(this.stripe, {
+        paymentIntentId: booking.stripePaymentIntentId,
+        bookingId,
+        bookingNumber: booking.bookingNumber,
+        amount: body.amount,
+        reason: body.reason,
+        note: body.note,
+      });
+      refundId = refund.id;
+      update = refundFields(charge, refund.id);
+      console.log(`✅ Stripe refund ${refund.id} for booking ${booking.bookingNumber}: €${(refund.amount / 100).toFixed(2)}`);
+    } else {
+      if (booking.paymentStatus !== 'PAID') {
+        throw new BadRequestException('Nothing has been paid on this booking');
+      }
+      const refundable = Math.max(0, (booking.totalAmount || 0) - (booking.refundAmount || 0));
+      const amount = body.amount == null ? refundable : Number(body.amount);
+      if (amount <= 0 || amount - refundable > 0.005) {
+        throw new BadRequestException(`The refund must be between €0.01 and €${refundable.toFixed(2)}`);
+      }
+      const total = Math.round(((booking.refundAmount || 0) + amount) * 100) / 100;
+      update = {
+        refundAmount: total,
+        refundedAt: new Date(),
+        paymentStatus: total >= (booking.totalAmount || 0) - 0.005 ? 'REFUNDED' : 'PAID',
+      };
+    }
+
+    if (body.note?.trim()) {
+      const line = `[${new Date().toISOString().slice(0, 10)}] Επιστροφή: ${body.note.trim()}`;
+      update.adminNotes = booking.adminNotes ? `${booking.adminNotes}\n${line}` : line;
+    }
+
+    const updated = await this.bookingModel.findByIdAndUpdate(bookingId, update, { returnDocument: 'after' });
+
+    return {
+      message: 'Refund processed',
+      refundId,
+      booking: {
+        id: updated._id,
+        paymentStatus: updated.paymentStatus,
+        refundAmount: updated.refundAmount,
+        stripeRefundId: updated.stripeRefundId,
+      },
+    };
+  }
+
   async cancelBooking(bookingId: string, body: any) {
     const booking = await this.bookingModel.findById(bookingId);
     if (!booking) {
@@ -375,62 +492,41 @@ export class AdminService {
       throw new BadRequestException('Cannot cancel a completed booking');
     }
 
-    let actualRefundAmount = body.refundAmount || 0;
-    let stripeRefundId = null;
+    // Zero or no amount cancels without a refund (a non-refundable stay). The
+    // refund runs first, so a refund Stripe refuses leaves the booking as it was.
+    const requested = Number(body.refundAmount) || 0;
+    let refundUpdate: Record<string, any> = {};
 
-    // Process Stripe refund if payment was made with card and has a payment intent
-    if (booking.paymentMethod === 'CARD' && booking.paymentStatus === 'PAID' && booking.stripePaymentIntentId) {
-      if (!this.stripe) {
-        throw new Error('Stripe is not configured. Cannot process refund.');
-      }
-
-      try {
-        // Get the payment intent to find the charge
-        const paymentIntent = await this.stripe.paymentIntents.retrieve(booking.stripePaymentIntentId);
-        
-        if (paymentIntent.latest_charge) {
-          // Convert refund amount to cents for Stripe
-          const refundAmountCents = Math.round(actualRefundAmount * 100);
-          
-          // Create the refund
-          const refund = await this.stripe.refunds.create({
-            charge: paymentIntent.latest_charge as string,
-            amount: refundAmountCents,
-            reason: 'requested_by_customer',
-            metadata: {
-              bookingId: bookingId,
-              cancellationReason: body.cancellationReason || 'Cancelled by admin'
-            }
-          });
-          
-          stripeRefundId = refund.id;
-          console.log(`✅ Stripe refund processed: ${refund.id} for booking ${bookingId}, amount €${actualRefundAmount}`);
-        } else {
-          console.warn(`⚠️ No charge found for payment intent ${booking.stripePaymentIntentId}`);
-        }
-      } catch (stripeError: any) {
-        console.error(`❌ Stripe refund failed for booking ${bookingId}:`, stripeError);
-        throw new Error(`Failed to process Stripe refund: ${stripeError.message}`);
-      }
-    } else if (booking.paymentMethod === 'CASH') {
-      console.log(`💵 Cash booking refund recorded for booking ${bookingId}, amount €${actualRefundAmount}`);
+    if (requested > 0 && booking.paymentMethod === 'CARD' && booking.stripePaymentIntentId) {
+      this.requireStripe();
+      const { refund, charge } = await refundCardPayment(this.stripe, {
+        paymentIntentId: booking.stripePaymentIntentId,
+        bookingId,
+        bookingNumber: booking.bookingNumber,
+        amount: requested,
+        note: body.cancellationReason,
+      });
+      refundUpdate = refundFields(charge, refund.id);
+      console.log(`✅ Stripe refund ${refund.id} for cancelled booking ${booking.bookingNumber}: €${requested.toFixed(2)}`);
+    } else if (requested > 0) {
+      const total = Math.round(((booking.refundAmount || 0) + requested) * 100) / 100;
+      refundUpdate = {
+        refundAmount: total,
+        refundedAt: new Date(),
+        ...(booking.paymentStatus === 'PAID' && total >= (booking.totalAmount || 0) - 0.005
+          ? { paymentStatus: 'REFUNDED' }
+          : {}),
+      };
+      console.log(`💵 Refund recorded for cancelled booking ${booking.bookingNumber}: €${requested.toFixed(2)}`);
     }
 
-    // Prepare update data
     const updateData: any = {
       bookingStatus: 'CANCELLED',
       cancelledAt: new Date(),
       cancellationReason: body.cancellationReason || 'Cancelled by admin',
-      adminNotes: body.adminNotes || '',
-      refundAmount: actualRefundAmount,
-      stripeRefundId: stripeRefundId
+      ...(body.adminNotes ? { adminNotes: body.adminNotes } : {}),
+      ...refundUpdate,
     };
-
-    // If payment was made, update payment status
-    if (booking.paymentStatus === 'PAID') {
-      updateData.paymentStatus = 'REFUNDED';
-      updateData.refundedAt = new Date();
-    }
 
     // Update booking using findOneAndUpdate to avoid save() issues
     const updatedBooking = await this.bookingModel.findByIdAndUpdate(
@@ -448,9 +544,16 @@ export class AdminService {
         cancellationReason: updatedBooking.cancellationReason,
         refundAmount: updatedBooking.refundAmount,
         stripeRefundId: updatedBooking.stripeRefundId,
+        paymentStatus: updatedBooking.paymentStatus,
         paymentMethod: updatedBooking.paymentMethod
       }
     };
+  }
+
+  private requireStripe() {
+    if (!this.stripe) {
+      throw new HttpException('Stripe is not configured', HttpStatus.SERVICE_UNAVAILABLE);
+    }
   }
 
   async updateBookingStatus(bookingId: string, body: { status: 'PENDING' | 'CONFIRMED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'CANCELLED'; adminNotes?: string }) {
@@ -759,6 +862,10 @@ export class AdminService {
     return { periods };
   }
 
+  getRateCalendar(from: string, days: number): Promise<RateCalendar> {
+    return this.pricingService.rateCalendar(from, days);
+  }
+
   async createSeasonalPricing(body: any) {
     const data = this.normalizeSeasonalInput(body);
     const period = await this.seasonalModel.create(data);
@@ -888,6 +995,36 @@ export class AdminService {
       amenities: type.amenities,
       floor: type.floor || 'ground'
     }));
+  }
+
+  /**
+   * Every room, night by night, for `days` nights starting `from`: booked,
+   * closed or free. Bookings are matched by overlap, so a stay that started
+   * before the window or ends after it still colours the nights it covers.
+   */
+  async getOccupancy(from: string, days: number): Promise<OccupancyResult> {
+    const start = new Date(`${from}T00:00:00.000Z`);
+    const end = new Date(`${addDays(from, days)}T00:00:00.000Z`);
+
+    const [rooms, bookings, blocks] = await Promise.all([
+      this.roomModel.find().sort({ sortOrder: 1, name: 1 })
+        .select('name roomType available totalRooms').lean(),
+      this.bookingModel.find({
+        roomId: { $ne: null },
+        bookingStatus: { $nin: ['CANCELLED'] },
+        checkIn: { $lt: end },
+        checkOut: { $gt: start },
+      })
+        .select('bookingNumber bookingStatus source checkIn checkOut roomId guestInfo.firstName guestInfo.lastName')
+        .sort({ checkIn: 1 })
+        .lean(),
+      this.roomBlockedDateModel.find({
+        startDate: { $lt: end },
+        endDate: { $gt: start },
+      }).lean(),
+    ]);
+
+    return buildOccupancy(from, days, rooms as any[], bookings as any[], blocks as any[]);
   }
 
   async getRoomAvailability(roomId: string, startDate: string, endDate: string) {

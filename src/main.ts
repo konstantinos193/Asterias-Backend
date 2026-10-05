@@ -14,7 +14,8 @@ import { MemoryMonitorService } from './utils/memory-monitor.service';
 import { KeepAliveService } from './keep-alive/keep-alive.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody: the Stripe webhook signature is computed over the exact bytes sent.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
   // Security middleware
   app.use(helmet());

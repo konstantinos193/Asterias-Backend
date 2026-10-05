@@ -59,14 +59,26 @@ export class RoomsController {
     @Query('checkOut') checkOut: string,
     @Query('adults') adults?: string,
     @Query('children') children?: string,
+    @Query('offerId') offerId?: string,
   ) {
     if (!checkIn || !checkOut) {
       throw new BadRequestException('checkIn and checkOut are required');
     }
     const quote = await this.pricingService.quoteStay(id, checkIn, checkOut, adults ?? '1', children ?? '0');
     const guests = (parseInt(adults ?? '1') || 0) + (parseInt(children ?? '0') || 0);
-    const taxes = await this.pricingService.applyTaxes(quote.subtotal, quote.nights, guests);
-    return { ...quote, taxes, total: Math.round(taxes.total * 100) / 100 };
+    // `subtotal` stays the undiscounted sum of `perNight`; taxes go on the
+    // discounted figure, exactly as PaymentsService.priceStay charges it.
+    const offer = await this.pricingService.applyOffer(quote.subtotal, id, checkIn, checkOut, offerId);
+    const taxes = await this.pricingService.applyTaxes(offer.subtotal, quote.nights, guests);
+    return {
+      ...quote,
+      offer: offer.offer,
+      offerRejected: offer.offerRejected,
+      discountAmount: offer.discountAmount,
+      discountedSubtotal: offer.subtotal,
+      taxes,
+      total: Math.round(taxes.total * 100) / 100,
+    };
   }
 
   @Patch(':id')
