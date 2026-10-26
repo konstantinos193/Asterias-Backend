@@ -3,8 +3,8 @@ import { ClientSession, Connection, Model } from 'mongoose';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Room, RoomSchema } from '../models/room.model';
 import { Booking, BookingSchema } from '../models/booking.model';
-import { RoomBlockedDate, RoomBlockedDateDocument } from '../models/room-blocked-date.model';
 import { PricingService } from '../pricing/pricing.service';
+import { AvailabilityEngine } from '../availability/availability-engine';
 import Stripe from 'stripe';
 import { refundFields } from './stripe-refunds';
 import {
@@ -16,6 +16,7 @@ import {
   stayDescription,
   submitNote,
 } from './checkout-copy';
+import { CreateCashBookingDto } from './dto/create-cash-booking.dto';
 
 /** Sites the Stripe page may send the guest back to. */
 const RETURN_ORIGINS = [
@@ -43,10 +44,9 @@ export class PaymentsService {
   constructor(
     @InjectModel('Room') private roomModel: Model<Room>,
     @InjectModel('Booking') private bookingModel: Model<Booking>,
-    @InjectModel(RoomBlockedDate.name)
-    private roomBlockedDateModel: Model<RoomBlockedDateDocument>,
     @InjectConnection() private connection: Connection,
     private pricingService: PricingService,
+    private readonly availability: AvailabilityEngine,
   ) {
     this.stripe = process.env.STRIPE_SECRET_KEY
       ? new Stripe(process.env.STRIPE_SECRET_KEY)
@@ -74,8 +74,8 @@ export class PaymentsService {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
 
-    // Quick availability check (full atomic check happens at booking creation time)
-    await this.assertUnitAvailable(roomId, room.totalRooms, new Date(checkIn), new Date(checkOut));
+    // Quick check; the atomic one runs inside the booking transaction.
+    await this.availability.assertSellable(roomId, new Date(checkIn), new Date(checkOut));
 
     const priced = await this.priceStay(room, checkIn, checkOut, adults, children, offerId);
 
@@ -121,7 +121,7 @@ export class PaymentsService {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
 
-    await this.assertUnitAvailable(roomId, room.totalRooms, new Date(checkIn), new Date(checkOut));
+    await this.availability.assertSellable(roomId, new Date(checkIn), new Date(checkOut));
 
     const priced = await this.priceStay(room, checkIn, checkOut, adults, children, offerId);
     const roomName = localizedRoomName(room, lang);
@@ -409,9 +409,8 @@ export class PaymentsService {
     let booking: any;
     try {
       await session.withTransaction(async () => {
-        await this.assertUnitAvailable(
+        await this.availability.assertSellable(
           roomId,
-          room.totalRooms,
           new Date(checkIn),
           new Date(checkOut),
           session,
@@ -422,8 +421,8 @@ export class PaymentsService {
           guestInfo: { ...guestInfo, specialRequests: specialRequests || '' },
           checkIn: new Date(checkIn),
           checkOut: new Date(checkOut),
-          adults: parseInt(adults),
-          children: parseInt(children),
+          adults: Number(adults),
+          children: Number(children) || 0,
           totalAmount: amountCents / 100,
           // finalPrice is the discounted subtotal, the one taxed and charged.
           roomSubtotal: num(finalPrice) ?? num(originalPrice),
@@ -475,7 +474,9 @@ export class PaymentsService {
     const finalPrice = offer.subtotal;
 
     const totalGuests = parseInt(adults) + parseInt(children || 0);
-    const { vatAmount, municipalFee, environmentalTax, total } =
+    // vatIncluded, not vatAmount: the rate already contains the VAT, so what
+    // the booking records is the VAT inside the price, not a charge on top.
+    const { vatIncluded: vatAmount, municipalFee, environmentalTax, total } =
       await this.pricingService.applyTaxes(finalPrice, nights, totalGuests);
 
     const amountCents = Math.round(total * 100);
@@ -528,7 +529,11 @@ export class PaymentsService {
     }
   }
 
-  async createCashBooking(createCashBookingDto: any) {
+  async createCashBooking(
+    createCashBookingDto: CreateCashBookingDto,
+    options: { isAdmin: boolean } = { isAdmin: true },
+  ) {
+    const { isAdmin } = options;
     const { roomId, checkIn, checkOut, adults, children, totalAmount, guestInfo, specialRequests, depositAmount, depositPaid } = createCashBookingDto;
 
     const room = await this.roomModel.findById(roomId);
@@ -543,10 +548,9 @@ export class PaymentsService {
     const cashGuests = (parseInt(String(adults)) || 0) + (parseInt(String(children)) || 0);
     const taxes = await this.pricingService.applyTaxes(quote.subtotal, quote.nights, cashGuests);
 
-    // Cash is collected in person, so we honour the caller's amount (admins may
-    // enter a negotiated total, and the public wizard sends the same total the
-    // guest was shown).
-    let resolvedTotal = parseFloat(totalAmount);
+    // A negotiated total is the owner's to set, so only an admin's amount is
+    // honoured. A guest request is always priced here, whatever it asked for.
+    let resolvedTotal = isAdmin ? Number(totalAmount) : NaN;
     if (!Number.isFinite(resolvedTotal) || resolvedTotal <= 0) {
       resolvedTotal = taxes.total;
     }
@@ -558,7 +562,7 @@ export class PaymentsService {
       Math.abs(resolvedTotal - taxes.total) < 0.01
         ? {
             roomSubtotal: quote.subtotal,
-            vatAmount: taxes.vatAmount,
+            vatAmount: taxes.vatIncluded,
             municipalFee: taxes.municipalFee,
             environmentalTax: taxes.environmentalTax,
           }
@@ -569,9 +573,8 @@ export class PaymentsService {
     let booking: any;
     try {
       await session.withTransaction(async () => {
-        await this.assertUnitAvailable(
+        await this.availability.assertSellable(
           roomId,
-          room.totalRooms,
           new Date(checkIn),
           new Date(checkOut),
           session,
@@ -582,17 +585,21 @@ export class PaymentsService {
           guestInfo: { ...guestInfo, specialRequests: specialRequests || '' },
           checkIn: new Date(checkIn),
           checkOut: new Date(checkOut),
-          adults: parseInt(adults),
-          children: parseInt(children),
+          adults: Number(adults),
+          children: Number(children) || 0,
           totalAmount: resolvedTotal,
           ...breakdown,
           paymentMethod: 'CASH',
           paymentStatus: 'PENDING',
-          bookingStatus: 'CONFIRMED',
+          // A guest asking to pay cash has handed over no money, so the room is
+          // not held until the property confirms. Otherwise anyone could block
+          // the whole property for free.
+          bookingStatus: isAdmin ? 'CONFIRMED' : 'PENDING',
+          awaitingPropertyConfirmation: !isAdmin,
           bookingNumber,
-          depositAmount: depositAmount != null ? parseFloat(depositAmount) : 0,
-          depositPaid: depositPaid === true || depositPaid === 'true',
-          depositPaidAt: (depositPaid === true || depositPaid === 'true') ? new Date() : null,
+          depositAmount: isAdmin && depositAmount != null ? Number(depositAmount) : 0,
+          depositPaid: isAdmin && depositPaid === true,
+          depositPaidAt: isAdmin && depositPaid === true ? new Date() : null,
         });
         await booking.save({ session });
       });
@@ -601,7 +608,9 @@ export class PaymentsService {
     }
 
     return {
-      message: 'Cash booking created successfully',
+      message: isAdmin
+        ? 'Cash booking created successfully'
+        : 'Cash booking requested; awaiting confirmation from the property',
       booking,
     };
   }
@@ -622,59 +631,6 @@ export class PaymentsService {
       amount: paymentIntent.amount / 100,
       currency: paymentIntent.currency
     };
-  }
-
-  /**
-   * A Room document is a room TYPE with `totalRooms` physical units, which is
-   * how BookingsService.checkAvailability has always read it. The payment paths
-   * used to reject as soon as ONE overlapping booking existed, so in high season
-   * every guest after the first was told the room was unavailable and could not
-   * complete a booking. Comparing against the unit count is also correct when a
-   * room really is a single unit (totalRooms = 1).
-   */
-  private async assertUnitAvailable(
-    roomId: string,
-    totalRooms: number,
-    checkIn: Date,
-    checkOut: Date,
-    session?: ClientSession,
-  ): Promise<void> {
-    // Dates the owner closed off. These were only ever filtered out of the room
-    // LISTING, so a guest arriving on a direct booking link could still pay for
-    // a closed period — the overbooking the owner asked us to prevent.
-    // Same overlap rule as RoomsService.findAvailable.
-    const blocked = await this.roomBlockedDateModel.countDocuments(
-      {
-        roomId,
-        startDate: { $lt: checkOut },
-        endDate: { $gt: checkIn },
-      },
-      session ? { session } : {},
-    );
-
-    if (blocked > 0) {
-      throw new HttpException(
-        'Room is not available for the selected dates',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-
-    const overlapping = await this.bookingModel.countDocuments(
-      {
-        roomId,
-        bookingStatus: { $nin: ['CANCELLED'] },
-        checkIn: { $lt: checkOut },
-        checkOut: { $gt: checkIn },
-      },
-      session ? { session } : {},
-    );
-
-    if (overlapping >= Math.max(1, totalRooms || 1)) {
-      throw new HttpException(
-        'Room is not available for the selected dates',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
   }
 
   private async generateBookingNumber(): Promise<string> {

@@ -52,12 +52,14 @@ export class User {
       country: String
     }
   })
+  // Optional in the schema, so optional in the type: a user can save a city
+  // without a postcode.
   address: {
-    street: string;
-    city: string;
-    state: string;
-    zipCode: string;
-    country: string;
+    street?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+    country?: string;
   };
 
   @ApiProperty()

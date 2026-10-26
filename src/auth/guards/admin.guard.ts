@@ -1,27 +1,32 @@
-import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { REQUIRE_ADMIN_KEY } from '../decorators/require-admin.decorator';
+import { ALLOW_NON_ADMIN_KEY } from '../decorators/require-admin.decorator';
 
+/**
+ * Fail-closed: if this guard is on the route, the caller must be an admin.
+ *
+ * The previous version returned true whenever `@RequireAdmin()` was absent from
+ * the handler. Since `reflector.get()` does not see class-level metadata, that
+ * also covered AdminController, which declares `@RequireAdmin()` on the class —
+ * so the whole admin surface, plus room/offer/contact/booking writes, was
+ * reachable by anyone holding any valid token.
+ */
 @Injectable()
 export class AdminGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requireAdmin = this.reflector.get<boolean>(
-      REQUIRE_ADMIN_KEY,
+    const allowNonAdmin = this.reflector.getAllAndOverride<boolean>(ALLOW_NON_ADMIN_KEY, [
       context.getHandler(),
-    );
-
-    if (!requireAdmin) {
-      return true; // No admin requirement
+      context.getClass(),
+    ]);
+    if (allowNonAdmin) {
+      return true;
     }
 
-    const request = context.switchToHttp().getRequest();
-    const user = request.user;
-
-    // If no user or not admin, deny access
+    const user = context.switchToHttp().getRequest().user;
     if (!user || user.role !== 'ADMIN') {
-      return false;
+      throw new ForbiddenException('Administrator access required');
     }
 
     return true;

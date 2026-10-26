@@ -11,6 +11,7 @@ import {
   Request
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { ContactService } from './contact.service';
@@ -23,7 +24,10 @@ import { ReplyToContactDto } from './dto/reply-to-contact.dto';
 export class ContactController {
   constructor(private readonly contactService: ContactService) {}
 
+  // Unauthenticated and it sends mail from the property's address, so it is
+  // both a spam relay and a way to run up the SMTP bill.
   @Post()
+  @Throttle({ default: { limit: 3, ttl: 60000 }, strict: { limit: 10, ttl: 900000 } })
   @ApiOperation({ summary: 'Submit contact form (public)' })
   @ApiResponse({ status: 201, description: 'Contact form submitted successfully' })
   @ApiResponse({ status: 400, description: 'Bad request' })

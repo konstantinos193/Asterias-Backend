@@ -1,0 +1,44 @@
+# Ban policy: what happens when a scenario fires.
+#
+# Decisions are enforced by the Traefik plugin, which fetches them every 60s in
+# stream mode. Durations are therefore effective within a minute, not instantly
+# -- that is the cost of stream mode and it is the right trade here.
+
+# AppSec/WAF hits first. These are unambiguous: an SQLi payload or a CVE probe
+# is not a misconfigured client, so it gets a longer ban than a behavioural
+# trigger. Kept separate from the rule below so the duration can differ.
+name: appsec_remediation
+filters:
+  - Alert.Remediation == true && Alert.GetScenario() startsWith "crowdsecurity/appsec"
+decisions:
+  - type: ban
+    duration: 12h
+on_success: break
+
+---
+# Behavioural scenarios: scanning, brute force, enumeration. 4h is long enough
+# to make an attack uneconomic and short enough that a NAT'd office or a mobile
+# carrier IP that trips it recovers the same day.
+name: default_ip_remediation
+filters:
+  - Alert.Remediation == true && Alert.GetScope() == "Ip"
+decisions:
+  - type: ban
+    duration: 4h
+# Repeat offenders get progressively longer bans instead of the same 4h
+# forever. Requires the crowdsecurity/decisions-count parser, which ships with
+# the base collection.
+duration_expr: Sprintf('%dh', (GetDecisionsCount(Alert.GetValue()) + 1) * 4)
+on_success: break
+
+---
+# Range-scope decisions arrive from the community blocklist for whole subnets
+# that are nothing but attack traffic. Handled separately because banning a
+# range on local evidence alone would be too blunt.
+name: range_remediation
+filters:
+  - Alert.Remediation == true && Alert.GetScope() == "Range"
+decisions:
+  - type: ban
+    duration: 4h
+on_success: break

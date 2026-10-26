@@ -8,6 +8,8 @@ import { BookingHistory, BookingHistorySchema } from '../models/booking-history.
 import { Room, RoomSchema } from '../models/room.model';
 import { EmailModule } from '../email/email.module';
 import { AuthModule } from '../auth/auth.module';
+import { AvailabilityEngineModule } from '../availability/availability-engine.module';
+import { PricingModule } from '../pricing/pricing.module';
 
 @Module({
   imports: [
@@ -17,7 +19,9 @@ import { AuthModule } from '../auth/auth.module';
       { name: Room.name, schema: RoomSchema },
     ]),
     EmailModule,
-    AuthModule
+    AuthModule,
+    AvailabilityEngineModule,
+    PricingModule,
   ],
   controllers: [BookingsController],
   providers: [BookingsService, RoomCombinationService],

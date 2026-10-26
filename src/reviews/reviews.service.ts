@@ -5,6 +5,10 @@ import { Review, ReviewDocument } from '../models/review.model';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { ImportReviewsDto } from './dto/import-reviews.dto';
+import { safeSort } from '../common/sort';
+
+/** Fields a caller may sort reviews by. Anything else falls back to the default. */
+const SORTABLE_FIELDS = ['reviewDate', 'rating', 'createdAt', 'updatedAt', 'featured'] as const;
 
 @Injectable()
 export class ReviewsService {
@@ -50,10 +54,11 @@ export class ReviewsService {
       filter.$text = { $search: search };
     }
 
-    // When searching by text, rank by relevance score; otherwise honour the caller's sort.
+    // When searching by text, rank by relevance score; otherwise honour the caller's sort,
+    // but only for fields we are willing to sort by.
     const sort: any = search
       ? { score: { $meta: 'textScore' } }
-      : { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+      : safeSort(sortBy, SORTABLE_FIELDS, 'reviewDate', sortOrder);
 
     // Pagination
     const skip = (page - 1) * limit;

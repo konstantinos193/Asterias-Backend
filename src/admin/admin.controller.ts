@@ -15,7 +15,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
-import { isDayKey, todayAtProperty } from './occupancy';
+import { isDayKey, todayAtProperty } from '../availability/availability-rules';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { RequireAdmin } from '../auth/decorators/require-admin.decorator';

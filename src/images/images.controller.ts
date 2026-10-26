@@ -70,6 +70,13 @@ export class ImagesController {
 
   @Get(':publicId')
   getFile(@Param('publicId') publicId: string, @Res() res: Response) {
+    // The id is interpolated into a redirect target, and Express has already
+    // percent-decoded it — so `..` segments or a stray CRLF arrive intact.
+    // Restrict it to what a Cloudinary public id actually looks like.
+    if (!/^[A-Za-z0-9_\-./]{1,255}$/.test(publicId) || publicId.includes('..')) {
+      throw new HttpException('Invalid image id', HttpStatus.BAD_REQUEST);
+    }
+
     const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'dguz3xo20';
     const cloudinaryUrl = `https://res.cloudinary.com/${cloudName}/image/upload/${publicId}`;
     res.redirect(302, cloudinaryUrl);

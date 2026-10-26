@@ -9,6 +9,7 @@ import { SettingsModule } from '../settings/settings.module';
 // made through the admin panel invalidates the public /api/rooms list cache.
 import { RoomsModule } from '../rooms/rooms.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { AvailabilityEngineModule } from '../availability/availability-engine.module';
 import { Booking, BookingSchema } from '../models/booking.model';
 import { Room, RoomSchema } from '../models/room.model';
 import { RoomBlockedDate, RoomBlockedDateSchema } from '../models/room-blocked-date.model';
@@ -31,6 +32,7 @@ import { SeasonalPricing, SeasonalPricingSchema } from '../models/seasonal-prici
     SettingsModule,
     RoomsModule,
     PricingModule,
+    AvailabilityEngineModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

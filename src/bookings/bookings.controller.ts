@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, NotFoundE
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { BookingsService } from './bookings.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { OptionalAuthGuard } from '../auth/guards/optional-auth.guard';
+import { AdminGuard } from '../auth/guards/admin.guard';
 import { ApiKeyAuthGuard } from '../auth/guards/api-key-auth.guard';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
@@ -15,16 +15,29 @@ import { MongoObjectIdPipe } from '../common/pipes/mongodb-object-id.pipe';
 export class BookingsController {
   constructor(private readonly bookingsService: BookingsService) {}
 
+  /**
+   * Admin only. It takes `totalAmount` and `bookingStatus` straight from the
+   * body, so while it was public anyone could create a CONFIRMED booking at any
+   * price and hold the apartment. Guests book through the payment endpoints
+   * (which price the stay server-side) and the owner books through
+   * POST /payments/create-cash-booking.
+   */
   @Post()
-  @ApiOperation({ summary: 'Create a new booking' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiOperation({ summary: 'Create a new booking (admin)' })
   @ApiResponse({ status: 201, description: 'Booking successfully created' })
   create(@Body() createBookingDto: CreateBookingDto) {
     return this.bookingsService.create(createBookingDto);
   }
 
+  /**
+   * Admin only. Any signed-in account used to be able to page through every
+   * booking in the system — guest names, emails, phone numbers, stay dates and
+   * amounts. Guests list their own stays via GET /bookings/my-bookings.
+   */
   @Get()
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Get all bookings (paginated)' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiOperation({ summary: 'Get all bookings (admin, paginated)' })
   @ApiResponse({ status: 200, description: 'Bookings retrieved successfully' })
   findAll(
     @Query('page') page?: string,
@@ -49,8 +62,8 @@ export class BookingsController {
   }
 
   @Get('stats/summary')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Get booking statistics' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiOperation({ summary: 'Get booking statistics (admin)' })
   @ApiResponse({ status: 200, description: 'Statistics retrieved successfully' })
   getStats() {
     return this.bookingsService.getStats();
@@ -77,8 +90,15 @@ export class BookingsController {
     return this.bookingsService.findMyBookings(userId, { page: parsedPage, limit: parsedLimit, status });
   }
 
+  /**
+   * Signed in only. With OptionalAuthGuard a request without a token arrived as
+   * `req.user = null`, which made `userId` undefined — the same value an admin
+   * gets — so anyone holding a booking id could cancel anyone's booking. The
+   * guest flow is /my-bookings, which is behind the login already; a cancel link
+   * for guests who are not signed in needs a signed token, not an open route.
+   */
   @Post(':id/cancel')
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Cancel a booking' })
   @ApiResponse({ status: 200, description: 'Booking cancelled successfully' })
   @ApiResponse({ status: 404, description: 'Booking not found' })
@@ -91,22 +111,38 @@ export class BookingsController {
     return booking;
   }
 
+  /**
+   * Owner or admin. It used to return any booking to any signed-in user, and
+   * booking ids are handed out to guests, so one account was enough to walk
+   * the whole table.
+   */
   @Get(':id')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Get booking by ID' })
+  @ApiOperation({ summary: 'Get booking by ID (owner or admin)' })
   @ApiResponse({ status: 200, description: 'Booking retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Booking not found' })
-  async findOne(@Param('id', MongoObjectIdPipe) id: string) {
+  async findOne(@Param('id', MongoObjectIdPipe) id: string, @Request() req) {
     const booking = await this.bookingsService.findOne(id);
     if (!booking) {
       throw new NotFoundException('Booking not found');
     }
+
+    if (req.user.role !== 'ADMIN') {
+      // findOne populates userId, so this is either a document or an id.
+      const owner = (booking as any).userId;
+      const ownerId = owner?._id ? String(owner._id) : owner ? String(owner) : null;
+      // A 404 rather than a 403: a 403 would confirm the booking exists.
+      if (!ownerId || ownerId !== String(req.user._id)) {
+        throw new NotFoundException('Booking not found');
+      }
+    }
+
     return booking;
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Update booking' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiOperation({ summary: 'Update booking (admin)' })
   @ApiResponse({ status: 200, description: 'Booking successfully updated' })
   @ApiResponse({ status: 404, description: 'Booking not found' })
   async update(@Param('id', MongoObjectIdPipe) id: string, @Body() updateBookingDto: UpdateBookingDto) {
@@ -118,8 +154,8 @@ export class BookingsController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Delete booking' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiOperation({ summary: 'Delete booking (admin)' })
   @ApiResponse({ status: 200, description: 'Booking successfully deleted' })
   @ApiResponse({ status: 404, description: 'Booking not found' })
   async remove(@Param('id', MongoObjectIdPipe) id: string) {
@@ -130,9 +166,13 @@ export class BookingsController {
     return booking;
   }
 
+  /**
+   * Admin only. Open to every signed-in user this was a way to send mail from
+   * the property's address to a guest, with an attacker-supplied message body.
+   */
   @Post(':id/send-email')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Send email to guest' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiOperation({ summary: 'Send email to guest (admin)' })
   @ApiResponse({ status: 200, description: 'Email sent successfully' })
   @ApiResponse({ status: 404, description: 'Booking not found' })
   async sendEmail(@Param('id', MongoObjectIdPipe) id: string, @Body() sendEmailDto: SendEmailDto) {
@@ -146,8 +186,13 @@ export class BookingsController {
     return this.bookingsService.getRoomCombinations(request);
   }
 
+  /**
+   * Admin only, and priced server-side: the combination in the body is treated
+   * as a choice of apartments, never as a price.
+   */
   @Post('multi-room-booking')
-  @ApiOperation({ summary: 'Create multi-room booking' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiOperation({ summary: 'Create multi-room booking (admin)' })
   @ApiResponse({ status: 201, description: 'Multi-room booking created successfully' })
   async createMultiRoomBooking(@Body() multiRoomBookingDto: MultiRoomBookingDto) {
     return this.bookingsService.createMultiRoomBooking(multiRoomBookingDto);

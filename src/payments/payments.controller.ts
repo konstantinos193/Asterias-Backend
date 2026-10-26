@@ -1,8 +1,10 @@
 import { Controller, Post, Body, HttpException, HttpStatus, Get, Param, Res, Req, Headers, HttpCode, UseGuards, RawBodyRequest } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentIntentDto } from './dto/create-payment-intent.dto';
 import { ConfirmPaymentDto } from './dto/confirm-payment.dto';
 import { CreateCheckoutSessionDto, ConfirmCheckoutSessionDto } from './dto/create-checkout-session.dto';
+import { CreateCashBookingDto, RequestCashBookingDto } from './dto/create-cash-booking.dto';
 import { Request, Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
@@ -12,6 +14,7 @@ import { RequireAdmin } from '../auth/decorators/require-admin.decorator';
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
+  @Throttle({ default: { limit: 10, ttl: 60000 }, strict: { limit: 50, ttl: 900000 } })
   @Post('create-payment-intent')
   async createPaymentIntent(@Body() createPaymentIntentDto: CreatePaymentIntentDto, @Res() res: Response) {
     try {
@@ -23,6 +26,7 @@ export class PaymentsController {
   }
 
   /** Stripe-hosted payment page for a stay. Returns the URL to send the guest to. */
+  @Throttle({ default: { limit: 10, ttl: 60000 }, strict: { limit: 50, ttl: 900000 } })
   @Post('create-checkout-session')
   async createCheckoutSession(@Body() dto: CreateCheckoutSessionDto, @Headers('origin') origin?: string) {
     try {
@@ -66,15 +70,50 @@ export class PaymentsController {
     }
   }
 
+  /**
+   * The owner's manual booking: a negotiated total and deposit are honoured,
+   * and the room is held immediately.
+   */
   @Post('create-cash-booking')
   @UseGuards(JwtAuthGuard, AdminGuard)
   @RequireAdmin()
-  async createCashBooking(@Body() createCashBookingDto: any) {
+  async createCashBooking(@Body() createCashBookingDto: CreateCashBookingDto) {
     try {
-      return await this.paymentsService.createCashBooking(createCashBookingDto);
+      return await this.paymentsService.createCashBooking(createCashBookingDto, { isAdmin: true });
     } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw new HttpException(
         { error: error.message || 'Failed to create cash booking' },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * The guest's "pay on arrival" request, from the public booking wizard.
+   *
+   * Kept apart from the admin route rather than branching inside one handler,
+   * so the authorization, the accepted fields and the rate limit are all
+   * visible at the route. No money has changed hands at this point, so the
+   * stay is recorded as PENDING and the property confirms it; the price is
+   * computed server-side and the DTO refuses a caller-supplied total.
+   */
+  @Post('request-cash-booking')
+  @Throttle({ default: { limit: 3, ttl: 60000 }, strict: { limit: 3, ttl: 900000 } })
+  async requestCashBooking(@Body() requestCashBookingDto: RequestCashBookingDto) {
+    try {
+      return await this.paymentsService.createCashBooking(
+        requestCashBookingDto as CreateCashBookingDto,
+        { isAdmin: false },
+      );
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        { error: error.message || 'Failed to request cash booking' },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

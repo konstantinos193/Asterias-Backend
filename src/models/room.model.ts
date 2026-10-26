@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { ApiProperty } from '@nestjs/swagger';
+import { bumpRevisionOnWrite } from '../availability/availability-revision';
 
 export type RoomDocument = Room & Document;
 
@@ -152,6 +153,16 @@ export class Room {
   @Prop({ default: true })
   available: boolean;
 
+  /**
+   * Why the room is off sale, when it is. Availability reads `available` alone,
+   * so 'closed' and 'maintenance' both shut the room; the distinction is for the
+   * owner. The admin panel offered these three states long before the field
+   * existed, which is why picking "Συντήρηση" used to come back as "Κλειστό".
+   */
+  @ApiProperty()
+  @Prop({ enum: ['available', 'closed', 'maintenance'], default: 'available' })
+  roomStatus: 'available' | 'closed' | 'maintenance';
+
   @ApiProperty()
   @Prop({ default: null })
   image: string;
@@ -186,6 +197,10 @@ export class Room {
 }
 
 export const RoomSchema = SchemaFactory.createForClass(Room);
+
+// The `available` flag and the unit count decide what is for sale, so a room
+// write drops the cached availability too.
+bumpRevisionOnWrite(RoomSchema);
 
 // Index for better query performance
 RoomSchema.index({ capacity: 1 });

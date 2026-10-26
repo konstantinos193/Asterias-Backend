@@ -1,0 +1,103 @@
+# Edge proxy for the whole box: Traefik + CrowdSec.
+#
+#   Staging (nginx still live, zero impact):
+#     WEB_PORT=8090 WEBSECURE_PORT=8453 docker compose -f docker-compose.traefik.yml up -d
+#   Production (after nginx is stopped):
+#     docker compose -f docker-compose.traefik.yml up -d
+#
+# Memory is the binding constraint on this host: 1.9GB total with ~1.0GB free
+# and four projects already resident. Both services carry hard limits so that
+# if the WAF misbehaves it gets OOM-killed on its own instead of taking a
+# client's API with it. The middleware is configured to fail open, so a dead
+# CrowdSec degrades protection rather than causing an outage.
+
+services:
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+    restart: unless-stopped
+    # Host networking, for two reasons: every upstream on this box is published
+    # on a host port (including stalwart, which is not in Docker at all), and
+    # two of them -- asterias and adinfinity -- are bound to 127.0.0.1 only, so
+    # they are unreachable from a bridge network's host-gateway address.
+    network_mode: host
+    # No `command:` overrides. Traefik treats its static configuration sources
+    # as mutually exclusive rather than merged: with traefik.yml mounted, the
+    # file wins and `--entryPoints.web.address` on the command line is silently
+    # ignored, which crash-loops against whatever already holds :80. So the
+    # ports live in the static file, and staging mounts a different file.
+    volumes:
+      - ${TRAEFIK_STATIC:-./traefik.yml}:/etc/traefik/traefik.yml:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
+      # Read-only: Traefik consumes certbot's certs, it does not manage them.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - traefik-acme:/letsencrypt
+      # Shared with CrowdSec, which parses the access log to decide who to ban.
+      - traefik-logs:/var/log/traefik
+    environment:
+      - TZ=Europe/Athens
+    depends_on:
+      - crowdsec
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.8.0
+    container_name: crowdsec
+    restart: unless-stopped
+    environment:
+      - TZ=Europe/Athens
+      # Collections. traefik + base-http-scenarios give the log parsers and the
+      # behavioural scenarios (scans, brute force, enumeration); http-cve and
+      # appsec-virtual-patching are the WAF rule sets, refreshed daily upstream.
+      # appsec-generic-rules covers the injection classes that are not tied to
+      # a specific CVE.
+      # appsec-crs is the OWASP Core Rule Set. It is the difference between a
+      # WAF that blocks known-bad paths and one that understands injection
+      # payloads; the shipped appsec-default config omits it. Installed here,
+      # wired in (out of band) by crowdsec/appsec-configs/appsec-api.yaml.
+      - COLLECTIONS=crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/http-cve crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-generic-rules crowdsecurity/appsec-crs
+      # Mints a fixed bouncer key at first start instead of making the key a
+      # manual `cscli bouncers add` step that has to be kept in sync by hand.
+      - BOUNCER_KEY_traefik=${CROWDSEC_BOUNCER_KEY}
+      # CrowdSec registers with the Central API on first start by itself, which
+      # is what pulls the community blocklist -- IPs that have already attacked
+      # other installs get blocked here pre-emptively. That is the single
+      # biggest source of blocks and needs no key.
+      #
+      # An ENROLL_KEY only adds the web console (dashboards, remote cscli). To
+      # attach one, get it from app.crowdsec.net and set both of these:
+      #   - ENROLL_KEY=<key>
+      #   - ENROLL_INSTANCE_NAME=asterias-vps
+    volumes:
+      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      - ./crowdsec/profiles.yaml:/etc/crowdsec/profiles.yaml:ro
+      # The local AppSec bundle, referenced by acquis.yaml as
+      # asterias/appsec-api. Lands beside the hub-managed configs.
+      - ./crowdsec/appsec-configs/appsec-api.yaml:/etc/crowdsec/appsec-configs/appsec-api.yaml:ro
+      - crowdsec-db:/var/lib/crowdsec/data
+      - crowdsec-config:/etc/crowdsec
+      # Read-only view of what Traefik wrote.
+      - traefik-logs:/var/log/traefik:ro
+    ports:
+      # Loopback only. Traefik is on the host network, so it reaches the LAPI
+      # and the AppSec server through these published ports rather than by
+      # container name. Nothing outside the box can touch either.
+      - "127.0.0.1:8090:8080"
+      - "127.0.0.1:7422:7422"
+    mem_limit: 400m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  traefik-acme:
+  traefik-logs:
+  crowdsec-db:
+  crowdsec-config:

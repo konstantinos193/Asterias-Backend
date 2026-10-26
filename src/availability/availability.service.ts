@@ -1,113 +1,109 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Room, RoomDocument } from '../models/room.model';
-import { Booking, BookingDocument } from '../models/booking.model';
-import {
-  calculateRoomAvailability, 
-  calculateDateAvailability, 
-  calculateMonthlyAvailability,
-  calculateMonthlyAggregatedAvailability,
-  getAvailabilityStatus 
-} from '../utils/availabilityCalculator';
+import { AvailabilityEngine } from './availability-engine';
+import { addDays, dayKey, nightsBetween, summarizeProperty } from './availability-rules';
 
+/**
+ * The guest-facing availability endpoints. All of the arithmetic lives in
+ * AvailabilityEngine; this only shapes it for the callers that already exist.
+ */
 @Injectable()
 export class AvailabilityService {
-  private calendarCache = new Map<string, { data: any; timestamp: number }>();
-  private readonly CALENDAR_CACHE_TTL_MS = 5 * 60_000;
-
-  constructor(
-    @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
-    @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>
-  ) {}
+  constructor(private readonly engine: AvailabilityEngine) {}
 
   async getRoomAvailability(roomId: string, date: string) {
-    const startDate = new Date(date);
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + 1);
-
-    return await calculateRoomAvailability(this.roomModel, this.bookingModel, roomId, startDate, endDate);
+    const day = dayKey(date);
+    const { availability } = await this.engine.getRoomNights(roomId, day, addDays(day, 1));
+    return availability[0] ?? null;
   }
 
   async getDateAvailability(date: string) {
-    const startDate = new Date(date);
-    return await calculateDateAvailability(this.roomModel, this.bookingModel, startDate);
+    const day = dayKey(date);
+    const occupancy = await this.engine.getOccupancy(day, 1);
+    return occupancy.rooms.map((room) => {
+      const night = room.nights[0];
+      const isAvailable = (night?.unitsFree ?? 0) > 0;
+      return {
+        roomId: room._id,
+        roomName: room.name,
+        totalRooms: room.totalRooms,
+        isAvailable,
+        status: night?.status ?? 'free',
+        color: isAvailable ? 'green' : 'red',
+        textColor: 'white',
+      };
+    });
   }
 
   async getMonthlyAvailability(roomId: string, month?: number, year?: number) {
-    let monthDate: Date;
-    if (month && year) {
-      monthDate = new Date(parseInt(year.toString()), parseInt(month.toString()) - 1, 1);
-    } else {
-      monthDate = new Date();
-    }
+    const now = new Date();
+    const m = month ?? now.getMonth() + 1;
+    const y = year ?? now.getFullYear();
+    const from = `${y}-${String(m).padStart(2, '0')}-01`;
+    const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
 
-    return await calculateMonthlyAvailability(this.roomModel, this.bookingModel, roomId, monthDate);
+    const occupancy = await this.engine.getOccupancy(from, days, [roomId]);
+    const room = occupancy.rooms[0];
+    if (!room) return {};
+
+    const availability: Record<string, unknown> = {};
+    for (const night of room.nights) {
+      const isAvailable = (night.unitsFree ?? 0) > 0;
+      availability[night.date] = {
+        roomId: room._id,
+        roomName: room.name,
+        totalRooms: room.totalRooms,
+        isAvailable,
+        status: night.status,
+        reason: night.reason,
+        color: isAvailable ? 'green' : 'red',
+        textColor: 'white',
+      };
+    }
+    return availability;
   }
 
-  invalidateCalendarCache(month: number, year: number) {
-    this.calendarCache.delete(`${year}-${month}`);
+  invalidateCalendarCache() {
+    this.engine.invalidate();
   }
 
   async getCalendarAvailability(month?: number, year?: number) {
-    let monthDate: Date;
-    if (month && year) {
-      monthDate = new Date(parseInt(year.toString()), parseInt(month.toString()) - 1, 1);
-    } else {
-      monthDate = new Date();
-    }
-
-    const cacheKey = `${monthDate.getFullYear()}-${monthDate.getMonth() + 1}`;
-    const cached = this.calendarCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < this.CALENDAR_CACHE_TTL_MS) {
-      return cached.data;
-    }
-
-    const monthlyAvailability = await calculateMonthlyAggregatedAvailability(this.roomModel, this.bookingModel, monthDate);
-    
-    // Transform data for frontend calendar
-    const calendarData = {};
-    Object.keys(monthlyAvailability).forEach(date => {
-      const dayData = monthlyAvailability[date];
-      calendarData[date] = {
-        status: dayData.status,
-        color: dayData.color,
-        textColor: dayData.textColor,
-        availableRooms: dayData.availableRooms,
-        totalRooms: dayData.totalRooms,
-        isAvailable: dayData.isAvailable
-      };
-    });
-
-    const result = {
-      month: monthDate.getMonth() + 1,
-      year: monthDate.getFullYear(),
-      availability: calendarData
-    };
-    this.calendarCache.set(cacheKey, { data: result, timestamp: Date.now() });
-    return result;
+    return this.engine.getPropertyCalendar(month, year);
   }
 
   async getAvailabilityOverview() {
-    const today = new Date();
-    const nextWeek = new Date(today);
-    nextWeek.setDate(nextWeek.getDate() + 7);
+    const today = this.engine.today();
+    const nextWeek = addDays(today, 7);
 
-    const [todayData, nextWeekData, totalRooms] = await Promise.all([
-      calculateDateAvailability(this.roomModel, this.bookingModel, today),
-      calculateDateAvailability(this.roomModel, this.bookingModel, nextWeek),
-      this.roomModel.countDocuments({ available: true }),
-    ]);
+    const occupancy = await this.engine.getOccupancy(today, nightsBetween(today, nextWeek) + 1);
+    const nights = summarizeProperty(occupancy);
 
-    const availableToday = todayData.filter(r => r.isAvailable).length;
-    const bookedToday = todayData.filter(r => !r.isAvailable).length;
+    const perRoom = (index: number) =>
+      occupancy.rooms.map((room) => {
+        const night = room.nights[index];
+        const isAvailable = (night?.unitsFree ?? 0) > 0;
+        return {
+          roomId: room._id,
+          roomName: room.name,
+          totalRooms: room.totalRooms,
+          isAvailable,
+          status: night?.status ?? 'free',
+          reason: night?.reason,
+          color: isAvailable ? 'green' : 'red',
+          textColor: 'white',
+        };
+      });
+
+    const todayRooms = perRoom(0);
+    const nextWeekIndex = Math.max(0, occupancy.dates.indexOf(nextWeek));
 
     return {
-      today: todayData,
-      nextWeek: nextWeekData,
-      totalRooms,
-      availableToday,
-      bookedToday,
+      today: todayRooms,
+      nextWeek: perRoom(nextWeekIndex),
+      totalRooms: nights[today]?.totalRooms ?? 0,
+      sellableRooms: nights[today]?.sellableRooms ?? 0,
+      availableToday: nights[today]?.availableRooms ?? 0,
+      bookedToday: todayRooms.filter((r) => r.status === 'booked').length,
+      closedToday: todayRooms.filter((r) => r.status === 'closed').length,
     };
   }
 }

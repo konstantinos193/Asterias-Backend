@@ -8,6 +8,8 @@ import { UpdateRoomDto } from './dto/update-room.dto';
 import { Booking, BookingDocument } from '../models/booking.model';
 import { ChannelConfig, ChannelConfigDocument } from '../models/channel-config.model';
 import { Offer, OfferDocument } from '../models/offer.model';
+import { AvailabilityEngine } from '../availability/availability-engine';
+import { dayKey } from '../availability/availability-rules';
 
 @Injectable()
 export class RoomsService {
@@ -21,6 +23,7 @@ export class RoomsService {
     @InjectModel('Booking') private bookingModel: Model<BookingDocument>,
     @InjectModel(ChannelConfig.name) private channelConfigModel: Model<ChannelConfigDocument>,
     @InjectModel(Offer.name) private offerModel: Model<OfferDocument>,
+    private readonly availability: AvailabilityEngine,
   ) {}
 
   /**
@@ -55,114 +58,30 @@ export class RoomsService {
     return this.roomModel.findById(id).lean().exec() as Promise<Room | null>;
   }
 
+  /** Rooms a guest can book for these dates. One rule set: AvailabilityEngine. */
   async findAvailable(checkIn: string, checkOut: string): Promise<Room[]> {
-    const checkInDate = new Date(checkIn);
-    const checkOutDate = new Date(checkOut);
-
-    // Find room IDs with overlapping block entries
-    const blockedRoomIds = await this.roomBlockedDateModel.distinct('roomId', {
-      startDate: { $lt: checkOutDate },
-      endDate: { $gt: checkInDate },
-    });
-
-    const notBlocked = await this.roomModel.find({
-      available: true,
-      _id: { $nin: blockedRoomIds },
-    }).lean();
-    if (!notBlocked.length) return [];
-
-    // Single aggregate instead of N countDocuments calls
-    const roomIds = notBlocked.map(r => (r as any)._id);
-    const conflicts = await this.bookingModel.aggregate([
-      {
-        $match: {
-          roomId: { $in: roomIds },
-          bookingStatus: { $nin: ['CANCELLED'] },
-          checkIn: { $lt: checkOutDate },
-          checkOut: { $gt: checkInDate },
-        },
-      },
-      { $group: { _id: '$roomId', count: { $sum: 1 } } },
-    ]);
-
-    const conflictMap = new Map(conflicts.map(c => [c._id.toString(), c.count as number]));
-
-    return notBlocked.filter(room =>
-      (conflictMap.get((room as any)._id.toString()) ?? 0) < room.totalRooms
-    ) as unknown as Room[];
+    return this.availability.getSellableRooms(new Date(checkIn), new Date(checkOut));
   }
-  
+
   async getRoomAvailability(roomId: string, startDate: Date, endDate: Date): Promise<any> {
-    const room = await this.roomModel.findById(roomId);
-    if (!room) {
+    const result = await this.availability.getRoomNights(
+      roomId,
+      dayKey(startDate),
+      dayKey(endDate),
+    );
+    if (!result.room) {
       throw new NotFoundException('Room not found');
     }
-
-    const [bookings, blockedDateEntries] = await Promise.all([
-      this.bookingModel.find({
-        roomId: room._id,
-        bookingStatus: { $nin: ['CANCELLED'] },
-        checkIn: { $lte: endDate },
-        checkOut: { $gte: startDate },
-      }).lean(),
-      this.roomBlockedDateModel.find({
-        roomId: room._id,
-        startDate: { $lt: endDate },
-        endDate: { $gt: startDate },
-      }).lean(),
-    ]);
-
-    // Pre-build O(1) lookup structures instead of scanning arrays per date
-    const bookedDateSet = new Set<string>();
-    for (const booking of bookings) {
-      const d = new Date(booking.checkIn);
-      while (d < booking.checkOut) {
-        bookedDateSet.add(d.toISOString().split('T')[0]);
-        d.setDate(d.getDate() + 1);
-      }
-    }
-
-    const blockedDateMap = new Map<string, { reason: string | null; _id: string }>();
-    for (const b of blockedDateEntries) {
-      const d = new Date(b.startDate);
-      const be = new Date(b.endDate);
-      while (d < be) {
-        blockedDateMap.set(d.toISOString().split('T')[0], { reason: b.reason || null, _id: (b as any)._id.toString() });
-        d.setDate(d.getDate() + 1);
-      }
-    }
-
-    const availability = [];
-    const current = new Date(startDate);
-
-    while (current <= endDate) {
-      const dateStr = current.toISOString().split('T')[0];
-      const isBooked = bookedDateSet.has(dateStr);
-      const blockEntry = blockedDateMap.get(dateStr) ?? null;
-
-      availability.push({
-        date: dateStr,
-        available: !isBooked && !blockEntry,
-        bookedCount: isBooked ? 1 : 0,
-        blocked: !!blockEntry,
-        blockReason: blockEntry ? blockEntry.reason : null,
-        blockId: blockEntry ? blockEntry._id : null,
-        totalRooms: room.totalRooms
-      });
-
-      current.setDate(current.getDate() + 1);
-    }
-
-    return {
-      room,
-      availability
-    };
+    return result;
   }
-  
+
   async blockDates(roomId: string, startDate: Date, endDate: Date, reason?: string): Promise<any> {
     const rid = new Types.ObjectId(roomId);
     const room = await this.roomModel.findById(rid).lean();
     if (!room) throw new NotFoundException('Room not found');
+    if (!(endDate > startDate)) {
+      throw new BadRequestException('endDate must be after startDate');
+    }
     await this.roomBlockedDateModel.create({ roomId: rid, startDate, endDate, reason: reason || '' });
     const blockedDates = await this.roomBlockedDateModel.find({ roomId: rid }).sort({ startDate: 1 }).lean();
     return { ...room, blockedDates };
@@ -184,6 +103,7 @@ export class RoomsService {
       .lean();
   }
 
+  /** The room on or off sale indefinitely. Off sale closes every night of it. */
   async updateRoomAvailability(roomId: string, available: boolean): Promise<Room> {
     const room = await this.roomModel.findByIdAndUpdate(
       roomId,
@@ -191,6 +111,7 @@ export class RoomsService {
       { new: true, runValidators: false }
     );
     if (!room) throw new NotFoundException('Room not found');
+    this.clearRoomsCache();
     return room;
   }
   

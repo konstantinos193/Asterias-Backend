@@ -3,6 +3,7 @@ import { Model } from 'mongoose';
 import { InjectModel } from '@nestjs/mongoose';
 import { Booking, BookingDocument } from '../models/booking.model';
 import { Room, RoomDocument } from '../models/room.model';
+import { stayNights } from '../availability/availability-rules';
 import puppeteer from 'puppeteer';
 
 @Injectable()
@@ -11,6 +12,22 @@ export class PdfService {
     @InjectModel('Booking') private bookingModel: Model<BookingDocument>,
     @InjectModel('Room') private roomModel: Model<RoomDocument>,
   ) {}
+
+  /**
+   * Returns the id of the account the booking belongs to, or null when the
+   * booking does not exist or was made without an account. Used by the
+   * controller to keep confirmations away from people who are not on them.
+   */
+  async getBookingOwnerId(bookingId: string): Promise<string | null> {
+    const booking = await this.bookingModel
+      .findById(bookingId)
+      .select('userId')
+      .lean()
+      .exec();
+
+    const owner = (booking as any)?.userId;
+    return owner ? String(owner) : null;
+  }
 
   async generateBookingConfirmationPdf(bookingId: string): Promise<Buffer> {
     // Get booking with room details
@@ -68,7 +85,7 @@ export class PdfService {
       day: 'numeric'
     });
     
-    const nights = Math.ceil((new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) / (1000 * 60 * 60 * 24));
+    const nights = stayNights(booking.checkIn, booking.checkOut);
     
     const language = booking.guestInfo.language || 'en';
     

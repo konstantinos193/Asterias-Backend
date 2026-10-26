@@ -12,6 +12,7 @@ import {
   HttpStatus,
   HttpCode
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { OffersService, CreateOfferDto, UpdateOfferDto, ApplicableOffersDto, ValidateCodeDto } from './offers.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -154,6 +155,9 @@ export class OffersController {
     };
   }
 
+  // Without a limit this endpoint is a discount-code oracle: an attacker can
+  // enumerate codes until one of them is live.
+  @Throttle({ default: { limit: 10, ttl: 60000 }, strict: { limit: 40, ttl: 900000 } })
   @Post('validate-code')
   @ApiOperation({ summary: 'Validate offer code' })
   @ApiResponse({ status: 200, description: 'Offer code is valid' })

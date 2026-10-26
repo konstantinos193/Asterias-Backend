@@ -1,7 +1,9 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, NotFoundException, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { ReviewsService } from './reviews.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminGuard } from '../auth/guards/admin.guard';
+import { OptionalAuthGuard } from '../auth/guards/optional-auth.guard';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { ImportReviewsDto } from './dto/import-reviews.dto';
@@ -13,7 +15,7 @@ export class ReviewsController {
   constructor(private readonly reviewsService: ReviewsService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Create a new review' })
   @ApiResponse({ status: 201, description: 'Review successfully created' })
   create(@Body() createReviewDto: CreateReviewDto) {
@@ -21,15 +23,22 @@ export class ReviewsController {
   }
 
   @Get()
+  @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get all reviews with filtering and pagination' })
   @ApiResponse({ status: 200, description: 'Reviews retrieved successfully' })
-  findAll(@Query() query: any) {
+  findAll(@Query() query: any, @Request() req) {
+    const isAdmin = req.user?.role === 'ADMIN';
     return this.reviewsService.findAll({
       page: query.page ? parseInt(query.page) : undefined,
-      limit: query.limit ? parseInt(query.limit) : undefined,
+      limit: Math.min(query.limit ? parseInt(query.limit) || 20 : 20, 100),
       source: query.source,
       rating: query.rating ? parseInt(query.rating) : undefined,
-      visible: query.visible !== undefined ? query.visible === 'true' : undefined,
+      // Hiding a review is a moderation decision. Anyone could read the hidden
+      // ones back with ?visible=false, so non-admins now get visible reviews
+      // whatever they ask for.
+      visible: isAdmin
+        ? (query.visible !== undefined ? query.visible === 'true' : undefined)
+        : true,
       featured: query.featured !== undefined ? query.featured === 'true' : undefined,
       sortBy: query.sortBy,
       sortOrder: query.sortOrder,
@@ -66,19 +75,25 @@ export class ReviewsController {
   }
 
   @Get(':id')
+  @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get review by ID' })
   @ApiResponse({ status: 200, description: 'Review retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Review not found' })
-  async findOne(@Param('id', MongoObjectIdPipe) id: string) {
+  async findOne(@Param('id', MongoObjectIdPipe) id: string, @Request() req) {
     const review = await this.reviewsService.findOne(id);
     if (!review) {
+      throw new NotFoundException('Review not found');
+    }
+    // Same rule as the list: a hidden review is not public just because the
+    // caller has its id.
+    if ((review as any).visible === false && req.user?.role !== 'ADMIN') {
       throw new NotFoundException('Review not found');
     }
     return review;
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Update review' })
   @ApiResponse({ status: 200, description: 'Review successfully updated' })
   @ApiResponse({ status: 404, description: 'Review not found' })
@@ -91,7 +106,7 @@ export class ReviewsController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Delete review' })
   @ApiResponse({ status: 200, description: 'Review successfully deleted' })
   @ApiResponse({ status: 404, description: 'Review not found' })
@@ -105,7 +120,7 @@ export class ReviewsController {
 
   // Admin endpoints
   @Post('import/google')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Import Google reviews' })
   @ApiResponse({ status: 200, description: 'Google reviews imported successfully' })
   importGoogleReviews(@Body() importData: ImportReviewsDto) {
@@ -113,7 +128,7 @@ export class ReviewsController {
   }
 
   @Patch(':id/toggle-featured')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Toggle review featured status' })
   @ApiResponse({ status: 200, description: 'Review featured status toggled successfully' })
   @ApiResponse({ status: 404, description: 'Review not found' })
@@ -122,7 +137,7 @@ export class ReviewsController {
   }
 
   @Patch(':id/toggle-visibility')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Toggle review visibility' })
   @ApiResponse({ status: 200, description: 'Review visibility toggled successfully' })
   @ApiResponse({ status: 404, description: 'Review not found' })
@@ -131,7 +146,7 @@ export class ReviewsController {
   }
 
   @Patch(':id/response')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({ summary: 'Add response to review' })
   @ApiResponse({ status: 200, description: 'Response added successfully' })
   @ApiResponse({ status: 404, description: 'Review not found' })

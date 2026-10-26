@@ -1,0 +1,17 @@
+# GENERATED FILE -- rewritten by scripts/deploy.sh on every cutover.
+#
+# This is the direct replacement for /etc/nginx/conf.d/asterias-upstream.conf.
+# Traefik's file provider watches this directory and reloads on write, so the
+# blue-green cutover no longer needs `nginx -t` + `nginx -s reload` -- the
+# switch is a single atomic file replacement with no signal and no restart.
+#
+# Hand edits are lost on the next deploy. To change the port permanently,
+# change deploy.sh.
+
+http:
+  services:
+    asterias:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:5011"
+        passHostHeader: true

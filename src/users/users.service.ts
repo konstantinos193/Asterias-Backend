@@ -15,8 +15,13 @@ export class UsersService {
     return this.userModel.findById(id);
   }
 
+  /**
+   * No longer reachable over HTTP. Kept for internal callers, with the role
+   * pinned so it cannot become an admin-creation path again — admins come from
+   * UserModel.createAdmin.
+   */
   async create(userData: Partial<User>): Promise<UserDocument> {
-    const user = new this.userModel(userData);
+    const user = new this.userModel({ ...userData, role: 'USER' });
     return user.save();
   }
 

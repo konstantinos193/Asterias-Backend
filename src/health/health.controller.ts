@@ -1,9 +1,11 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Res, UseGuards } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import Stripe from 'stripe';
 import { Response } from 'express';
 import { join } from 'path';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminGuard } from '../auth/guards/admin.guard';
 
 const STRIPE_CACHE_TTL_MS = 60_000;
 
@@ -17,12 +19,18 @@ export class HealthController {
   ) {
     this.stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy');
   }
+
+  /**
+   * Admin only. The public version returned the database host and database
+   * name, which is reconnaissance for anyone deciding where to point an attack.
+   */
   @Get('health/database')
+  @UseGuards(JwtAuthGuard, AdminGuard)
   async getDatabaseHealth() {
     try {
       const dbState = this.dbConnection.readyState;
       const isHealthy = dbState === 1;
-      
+
       return {
         status: isHealthy ? 'OK' : 'ERROR',
         database: 'MongoDB',
@@ -43,7 +51,13 @@ export class HealthController {
     }
   }
 
+  /**
+   * Admin only. This used to publish the Stripe account's available and
+   * pending balances to anyone who asked — the property's cash position, on an
+   * unauthenticated URL.
+   */
   @Get('health/stripe')
+  @UseGuards(JwtAuthGuard, AdminGuard)
   async getStripeHealth() {
     if (this.stripeCache && Date.now() - this.stripeCache.at < STRIPE_CACHE_TTL_MS) {
       return this.stripeCache.result;
@@ -73,16 +87,31 @@ export class HealthController {
     }
   }
 
+  /**
+   * Public liveness probe, and deliberately boring. It used to report the
+   * environment, process uptime and a full memory breakdown, which tells an
+   * attacker when the process last restarted and how it is responding to load.
+   */
   @Get('health')
   getHealth() {
     return {
       status: 'OK',
       message: 'Asterias Homes API is running',
       timestamp: new Date().toISOString(),
+    };
+  }
+
+  /** Admin-only detail for the uptime dashboard. */
+  @Get('health/details')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  getHealthDetails() {
+    return {
+      status: 'OK',
       environment: process.env.NODE_ENV || 'development',
       uptime: process.uptime(),
       memory: process.memoryUsage(),
-      version: '1.0.1'
+      version: '1.0.1',
+      timestamp: new Date().toISOString(),
     };
   }
 

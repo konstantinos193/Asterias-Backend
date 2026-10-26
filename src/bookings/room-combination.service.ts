@@ -3,6 +3,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Room, RoomDocument } from '../models/room.model';
 import { Booking, BookingDocument } from '../models/booking.model';
+import { AvailabilityEngine } from '../availability/availability-engine';
+import { PricingService } from '../pricing/pricing.service';
 
 export interface RoomInventoryItem {
   id: string;
@@ -12,18 +14,29 @@ export interface RoomInventoryItem {
   price: number;
   available: number;
   pricingByOccupancy: { guests: number; price: number }[];
+  /** PricingService subtotal for the WHOLE stay, by guest count. */
+  stayPriceByGuests: Map<number, number>;
 }
 
+/**
+ * Every price here is the pre-tax subtotal for the WHOLE stay, from
+ * PricingService — the same numbers GET /rooms/:id/quote and checkout use.
+ * They used to be per-night figures worked out from `room.price`, which is why
+ * the search results and the checkout total disagreed on anything seasonal.
+ */
 export interface RoomCombination {
   rooms: {
     roomId: string;
     roomName: string;
     count: number;
     occupancy: number;
+    /** Stay subtotal for one of these apartments. */
     pricePerRoom: number;
+    /** Stay subtotal for this line (pricePerRoom × count). */
     totalPrice: number;
   }[];
   totalCapacity: number;
+  /** Stay subtotal for the whole combination, before taxes and offers. */
   totalPrice: number;
   unusedBeds: number;
   score: number;
@@ -43,7 +56,9 @@ export interface CombinationRequest {
 export class RoomCombinationService {
   constructor(
     @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
-    @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>
+    @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>,
+    private readonly availability: AvailabilityEngine,
+    private readonly pricingService: PricingService,
   ) {}
 
   /**
@@ -53,42 +68,47 @@ export class RoomCombinationService {
     const rooms = await this.roomModel.find({ totalRooms: { $gt: 0 } }).lean().exec();
     if (rooms.length === 0) return [];
 
-    const roomIds = rooms.map(r => r._id);
+    // Closures and off-sale rooms count too: the combinations shown to the
+    // guest used to include apartments checkout would then refuse.
+    const sellability = await this.availability.getSellability(
+      checkIn,
+      checkOut,
+      rooms.map(r => r._id.toString()),
+    );
 
-    // One aggregate replaces N×countDocuments — group overlapping bookings by roomId
-    const bookedCounts: { _id: any; count: number }[] = await this.bookingModel.aggregate([
-      {
-        $match: {
-          roomId: { $in: roomIds },
-          bookingStatus: { $nin: ['CANCELLED'] },
-          $or: [
-            { checkIn: { $lt: checkOut, $gte: checkIn } },
-            { checkOut: { $gt: checkIn, $lte: checkOut } },
-            { checkIn: { $lte: checkIn }, checkOut: { $gte: checkOut } },
-          ],
-        },
-      },
-      { $group: { _id: '$roomId', count: { $sum: 1 } } },
-    ]);
+    const sellable = rooms.filter(
+      room => (sellability.get(room._id.toString())?.unitsFree ?? 0) > 0,
+    );
 
-    const bookedMap = new Map(bookedCounts.map(b => [b._id.toString(), b.count]));
+    // One PricingService quote per apartment, covering every occupancy a
+    // combination could put in it, so the search prices stays exactly as
+    // checkout will: seasonal rates, per-night resolution, room premium.
+    const quoted = await Promise.all(
+      sellable.map(async room => {
+        const occupancies = Array.from(
+          { length: Math.max(1, room.capacity || 1) },
+          (_, i) => i + 1,
+        );
+        const quotes = await this.pricingService.quoteStayByGuests(
+          room,
+          checkIn,
+          checkOut,
+          occupancies,
+        );
+        return new Map([...quotes].map(([guests, quote]) => [guests, quote.subtotal]));
+      }),
+    );
 
-    const inventory: RoomInventoryItem[] = [];
-    for (const room of rooms) {
-      const booked = bookedMap.get(room._id.toString()) ?? 0;
-      const availableCount = Math.max(0, room.totalRooms - booked);
-      if (availableCount > 0) {
-        inventory.push({
-          id: room._id.toString(),
-          name: room.name,
-          nameKey: room.nameKey,
-          maxOccupancy: room.capacity,
-          price: room.price,
-          available: availableCount,
-          pricingByOccupancy: room.pricingByOccupancy || [],
-        });
-      }
-    }
+    const inventory: RoomInventoryItem[] = sellable.map((room, i) => ({
+      id: room._id.toString(),
+      name: room.name,
+      nameKey: room.nameKey,
+      maxOccupancy: room.capacity,
+      price: room.price,
+      available: sellability.get(room._id.toString())!.unitsFree,
+      pricingByOccupancy: room.pricingByOccupancy || [],
+      stayPriceByGuests: quoted[i],
+    }));
 
     // Sort by actual price for the guest count if provided, otherwise by base price
     if (guestCount) {
@@ -449,18 +469,18 @@ export class RoomCombinationService {
    * Get price for specific occupancy level
    */
   private getPriceForOccupancy(room: RoomInventoryItem, guests: number): number {
-    // First try to find exact match for guest count
-    const exactPricing = room.pricingByOccupancy.find(p => p.guests === guests);
-    if (exactPricing) {
-      return exactPricing.price;
-    }
-    
-    // If no exact match, find the cheapest option that can accommodate the guests
-    const suitablePricing = room.pricingByOccupancy
-      .filter(p => p.guests >= guests)
-      .sort((a, b) => a.price - b.price)[0];
-    
-    return suitablePricing ? suitablePricing.price : room.price;
+    // Quoted by PricingService in buildRoomInventory. Occupancy tiers, seasonal
+    // rates and the room premium are all already in these numbers — reading
+    // `pricingByOccupancy` here again would undo the seasonal part.
+    const wanted = Math.max(1, Math.min(guests, room.maxOccupancy || 1));
+    const quoted = room.stayPriceByGuests.get(wanted);
+    if (quoted !== undefined) return quoted;
+
+    // Only reachable if the quote map is missing a count (a capacity of 0, say).
+    const nearest = [...room.stayPriceByGuests.entries()]
+      .filter(([g]) => g >= wanted)
+      .sort((a, b) => a[1] - b[1])[0];
+    return nearest ? nearest[1] : room.price;
   }
 
   /**

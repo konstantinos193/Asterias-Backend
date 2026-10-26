@@ -9,6 +9,7 @@ import { ChannelConfig, ChannelConfigSchema } from '../models/channel-config.mod
 import { Offer, OfferSchema } from '../models/offer.model';
 import { PricingModule } from '../pricing/pricing.module';
 import { AuthModule } from '../auth/auth.module';
+import { AvailabilityEngineModule } from '../availability/availability-engine.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { AuthModule } from '../auth/auth.module';
     ]),
     PricingModule,
     AuthModule,
+    AvailabilityEngineModule,
   ],
   controllers: [RoomsController],
   providers: [RoomsService],

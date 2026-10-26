@@ -108,3 +108,10 @@ temp/
 # NestJS specific
 *.spec.ts
 *.e2e-spec.ts
+# Traefik edge proxy: rendered config holding live secrets. middlewares.yml is
+# generated from middlewares.yml.template by traefik/install.sh (the file
+# provider cannot read env vars, so the bouncer key is substituted into it).
+traefik/dynamic/middlewares.yml
+traefik/dynamic/dashboard-users
+traefik/traefik.staging.yml
+traefik/.env

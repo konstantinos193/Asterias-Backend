@@ -1,35 +1,49 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Put, UseGuards, Request, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { UsersService } from './users.service';
-import { CreateUserDto } from '../auth/dto/create-user.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { User } from '../models/user.model';
+import { MongoObjectIdPipe } from '../common/pipes/mongodb-object-id.pipe';
 
 @ApiTags('users')
 @Controller('users')
+@UseGuards(JwtAuthGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Create a new user' })
-  @ApiResponse({ status: 201, description: 'User successfully created' })
-  async create(@Body() createUserDto: CreateUserDto) {
-    return this.usersService.create(createUserDto);
-  }
+  // POST /api/users is gone. It was unauthenticated and took the same DTO as
+  // registration, including `role`, so it was a second way for anyone to mint
+  // an administrator. Accounts are created through POST /api/auth/register
+  // (always role USER) or by seed/CLI for admins.
 
-  @UseGuards(JwtAuthGuard)
   @Get(':id')
-  @ApiOperation({ summary: 'Get user by ID' })
+  @ApiOperation({ summary: 'Get user by ID (self, or any user for admins)' })
   @ApiResponse({ status: 200, description: 'User found' })
-  async findById(@Param('id') id: string) {
-    return this.usersService.getPublicProfile(id);
+  async findById(@Param('id', MongoObjectIdPipe) id: string, @Request() req) {
+    // Previously any signed-in user could read any other account's profile —
+    // name, email, phone and postal address for the whole user table.
+    if (req.user.role !== 'ADMIN' && String(req.user._id) !== id) {
+      throw new ForbiddenException('You may only view your own profile');
+    }
+
+    const profile = await this.usersService.getPublicProfile(id);
+    if (!profile) {
+      throw new NotFoundException('User not found');
+    }
+    return profile;
   }
 
-  @UseGuards(JwtAuthGuard)
   @Put(':id/last-login')
-  @ApiOperation({ summary: 'Update user last login' })
+  @ApiOperation({ summary: 'Update last login for the signed-in user' })
   @ApiResponse({ status: 200, description: 'Last login updated' })
-  async updateLastLogin(@Param('id') id: string) {
-    return this.usersService.updateLastLogin(id);
+  async updateLastLogin(@Param('id', MongoObjectIdPipe) id: string, @Request() req) {
+    if (req.user.role !== 'ADMIN' && String(req.user._id) !== id) {
+      throw new ForbiddenException('You may only update your own account');
+    }
+
+    const user = await this.usersService.updateLastLogin(id);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return this.usersService.getPublicProfile(id);
   }
 }

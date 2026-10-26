@@ -1,0 +1,123 @@
+# Traefik v3 static configuration for the shared edge proxy.
+#
+# This box fronts four unrelated projects (asterias, kyklos, adinfinity,
+# melissourgoi) that used to share one host nginx. Traefik replaces that nginx
+# wholesale -- there is only one :80/:443 pair on the host, so a partial
+# conversion is not possible.
+#
+# Static config needs a restart to take effect. Everything that changes during
+# normal operation (routers, services, middlewares, the blue-green cutover)
+# lives in dynamic/ and is hot-reloaded, so a deploy never restarts Traefik.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: INFO
+  format: json
+
+# CrowdSec reads this file to decide who to ban, so the fields it parses have to
+# be here: JSON format, and ClientHost/RequestMethod/RequestPath/DownstreamStatus
+# are what the crowdsecurity/traefik collection expects. Keeping the header
+# allowlist narrow avoids writing cookies and auth tokens to disk.
+accessLog:
+  filePath: /var/log/traefik/access.log
+  format: json
+  bufferingSize: 100
+  fields:
+    defaultMode: keep
+    headers:
+      defaultMode: drop
+      names:
+        User-Agent: keep
+        Referer: keep
+        Content-Type: keep
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  # Internal only: health probe and the dashboard router. Bound to loopback
+  # because :8080 on this host already belongs to stalwart (the mail admin UI).
+  traefik:
+    address: "127.0.0.1:8099"
+
+  websecure:
+    address: ":443"
+    http:
+      # TLS must be enabled here even though no resolver is named. A router is
+      # either a TLS router or a plain-HTTP one; with this block absent, every
+      # router below becomes plain-HTTP, HTTPS requests match nothing, and the
+      # entrypoint answers its own 404 while still serving a valid certificate
+      # from the default store. Empty `tls: {}` means: terminate TLS, take the
+      # certificate from dynamic/tls.yml.
+      #
+      # To hand certificate management to Traefik and retire certbot, add
+      #   certResolver: le
+      # under this key and recreate the container -- but only once Traefik
+      # actually owns :443, because TLS-ALPN validates on that port.
+      tls: {}
+
+      # Every router inherits the protection chain from the entrypoint, so a
+      # future vhost cannot be added without it by forgetting a label.
+      middlewares:
+        - crowdsec@file
+        - security-headers@file
+        - rate-limit@file
+        - inflight@file
+    # Slow-loris defence: a client that opens a connection and dribbles bytes
+    # gets cut off rather than holding a worker. nginx had none of this.
+    transport:
+      respondingTimeouts:
+        readTimeout: 60s
+        writeTimeout: 60s
+        idleTimeout: 180s
+    forwardedHeaders:
+      # Traefik is the first hop from the internet. Trusting an inbound
+      # X-Forwarded-For from anyone would let a client forge its own source IP
+      # and walk straight past the rate limiter and CrowdSec.
+      insecure: false
+
+# File provider only, on purpose. Every upstream on this box is already
+# published on a host port (that is how nginx reached them), so label-based
+# discovery buys nothing -- and it would cost mounting docker.sock into the
+# internet-facing proxy, which is effectively handing out root. Routers and
+# services live in dynamic/ and are hot-reloaded on write.
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  le:
+    acme:
+      email: konstantinosblavakis@gmail.com
+      storage: /letsencrypt/acme.json
+      # TLS-ALPN needs only :443 and no path routing, unlike httpChallenge.
+      # Defined but deliberately unreferenced: the cutover serves the existing
+      # certbot certs from dynamic/tls.yml so it cannot fail on ACME, and the
+      # resolver is switched on afterwards by the
+      # --entryPoints.websecure.http.tls.certResolver flag in the compose file.
+      tlsChallenge: {}
+
+api:
+  dashboard: true
+  # Not insecure-mode: the dashboard is exposed through a router in
+  # dynamic/routers.yml that is IP-allowlisted and password protected.
+  insecure: false
+
+experimental:
+  plugins:
+    crowdsec:
+      moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+      version: v1.8.1
+
+ping:
+  entryPoint: traefik

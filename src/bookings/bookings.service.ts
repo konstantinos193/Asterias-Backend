@@ -10,6 +10,8 @@ import { SendEmailDto } from './dto/send-email.dto';
 import { EmailService } from '../email/email.service';
 import { RoomCombinationService, CombinationRequest, RoomCombination } from './room-combination.service';
 import { RoomCombinationRequestDto, MultiRoomBookingDto } from './dto/room-combination.dto';
+import { AvailabilityEngine } from '../availability/availability-engine';
+import { PricingService } from '../pricing/pricing.service';
 
 @Injectable()
 export class BookingsService {
@@ -19,7 +21,9 @@ export class BookingsService {
     @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
     @InjectConnection() private connection: Connection,
     private emailService: EmailService,
-    private roomCombinationService: RoomCombinationService
+    private roomCombinationService: RoomCombinationService,
+    private readonly availability: AvailabilityEngine,
+    private readonly pricingService: PricingService,
   ) {}
 
   async create(createBookingDto: CreateBookingDto): Promise<Booking> {
@@ -121,23 +125,18 @@ export class BookingsService {
     return this.bookingModel.getStats();
   }
 
+  /**
+   * Can this room be sold for these dates? Closures and the room's own on-sale
+   * flag count, not only the bookings — this answer is what the booking page
+   * shows the guest, so it has to match what checkout will accept.
+   */
   async checkAvailability(roomId: string, checkIn: Date, checkOut: Date): Promise<boolean> {
     const room = await this.roomModel.findById(roomId);
     if (!room) {
       throw new NotFoundException('Room not found');
     }
-    
-    const booked = await this.bookingModel.countDocuments({
-      roomId,
-      bookingStatus: { $nin: ['CANCELLED'] },
-      $or: [
-        { checkIn: { $lt: checkOut, $gte: checkIn } },
-        { checkOut: { $gt: checkIn, $lte: checkOut } },
-        { checkIn: { $lte: checkIn }, checkOut: { $gte: checkOut } }
-      ]
-    });
-    
-    return booked < room.totalRooms;
+
+    return this.availability.isSellable(roomId, checkIn, checkOut);
   }
 
   async sendEmail(id: string, sendEmailDto: SendEmailDto): Promise<any> {
@@ -255,6 +254,30 @@ export class BookingsService {
         for (let i = 0; i < combination.rooms.length; i++) {
           const room = combination.rooms[i];
 
+          // Same guard as checkout: the combination was priced minutes ago and
+          // the apartment may have been sold or closed since.
+          await this.availability.assertSellable(
+            room.roomId,
+            new Date(checkIn),
+            new Date(checkOut),
+            session,
+          );
+
+          // Price it here, from PricingService, instead of trusting the amount
+          // in the request: the body says WHICH apartments, never what they
+          // cost. One sub-booking is one apartment, so the quote is per unit.
+          const quote = await this.pricingService.quoteStay(
+            room.roomId,
+            checkIn,
+            checkOut,
+            room.occupancy,
+          );
+          const taxes = await this.pricingService.applyTaxes(
+            quote.subtotal,
+            quote.nights,
+            room.occupancy,
+          );
+
           for (let j = 0; j < room.count; j++) {
             const bookingNumber = combination.rooms.length > 1
               ? `${baseBookingNumber}-${String.fromCharCode(65 + i)}${j + 1}`
@@ -275,7 +298,9 @@ export class BookingsService {
               checkOut: new Date(checkOut),
               adults: Math.min(room.occupancy, 2),
               children: Math.max(0, room.occupancy - 2),
-              totalAmount: room.totalPrice / room.count,
+              totalAmount: taxes.total,
+              vatAmount: taxes.vatAmount,
+              municipalFee: taxes.municipalFee,
               paymentMethod,
               paymentStatus: 'PENDING' as const,
               bookingStatus: 'CONFIRMED' as const,

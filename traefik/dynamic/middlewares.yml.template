@@ -1,0 +1,194 @@
+# The protection chain.
+#
+# Order matters and is set on the websecure entrypoint in traefik.yml:
+#   crowdsec -> security-headers -> rate-limit -> inflight
+# Cheapest rejection first. CrowdSec in stream mode answers from an in-memory
+# cache of banned IPs, so a known-bad request costs almost nothing and never
+# reaches the token bucket, let alone Nest.
+#
+# NOTE ON THE LAPI KEY: the file provider does not expand environment
+# variables, so __CROWDSEC_BOUNCER_KEY__ below is a placeholder. install.sh
+# renders this file onto the server with the real key substituted. Edit the
+# template here, re-run install.sh to push it -- never hand-edit the rendered
+# copy on the server, it will be overwritten.
+#
+# A note on client IP, because it decides whether any of this works:
+# Traefik is the first hop from the internet here (no Cloudflare, no CDN -- the
+# frontend is on Vercel but api.asteriashome.gr points straight at this box).
+# Traefik appends the previous hop to X-Forwarded-For only during the last
+# stages of proxying, i.e. AFTER these middlewares have already run. So at
+# middleware time XFF holds only what the client sent, which is attacker
+# controlled. Every ipStrategy below therefore uses depth 0 == the real TCP
+# remote address. Do not "improve" this by setting depth: 1.
+
+http:
+  middlewares:
+
+    # ---------------------------------------------------------------------
+    # 1. CrowdSec: IP reputation + application firewall
+    # ---------------------------------------------------------------------
+    # stream mode keeps only the banned IPs in a local cache and refreshes it
+    # from the LAPI once a minute. That is the only Traefik->CrowdSec traffic
+    # for IP decisions, so per-request latency is a map lookup.
+    #
+    # AppSec (the WAF) is a different path: it does inspect requests inline
+    # over HTTP, which costs real milliseconds. It is worth it because it
+    # catches what an IP list cannot -- SQLi/RCE probes, CVE scans and, from
+    # plugin 1.8.0 + CrowdSec 1.8.0, bot detection.
+    crowdsec:
+      plugin:
+        crowdsec:
+          enabled: true
+          logLevel: INFO
+          crowdsecMode: stream
+          updateIntervalSeconds: 60
+          # If the LAPI is unreachable, fail OPEN for IP decisions rather than
+          # 403-ing the whole estate because one sidecar died. -1 never blocks.
+          updateMaxFailure: -1
+          # Do not hold Traefik's startup hostage on the first stream fetch.
+          streamStartupBlock: false
+          defaultDecisionSeconds: 60
+          httpTimeoutSeconds: 10
+          crowdsecLapiScheme: http
+          # Traefik runs on the host network, so CrowdSec is reached through
+          # the loopback ports its container publishes, not by container name.
+          # 8090 rather than 8080 because stalwart already owns :8080 here.
+          crowdsecLapiHost: 127.0.0.1:8090
+          crowdsecLapiKey: "__CROWDSEC_BOUNCER_KEY__"
+
+          crowdsecAppsecEnabled: true
+          crowdsecAppsecHost: 127.0.0.1:7422
+          # Fail open if AppSec itself errors or is unreachable. On a 2GB box
+          # the WAF is the first thing that will get OOM-killed, and a dead WAF
+          # must not take four clients' APIs down with it. CrowdSec IP bans and
+          # the rate limiter still apply in that window.
+          crowdsecAppsecFailureBlock: false
+          crowdsecAppsecUnreachableBlock: false
+          # Bodies above this are passed without inspection rather than
+          # blocked; 10MB covers the JSON APIs, image uploads are larger.
+          crowdsecAppsecBodyLimit: 10485760
+          crowdsecAppsecUnreadableBodyBlock: false
+
+          # No trusted proxy sits in front of Traefik, so trust no inbound
+          # forwarded header. If Cloudflare is ever put in front, this is the
+          # one list that must be filled in (with CF's published ranges).
+          forwardedHeadersTrustedIPs: []
+          # Loopback and the docker bridges bypass the bouncer entirely: these
+          # are the health checks and container-to-container calls.
+          clientTrustedIPs:
+            - 127.0.0.1/32
+            - 172.16.0.0/12
+          remediationStatusCode: 403
+
+    # ---------------------------------------------------------------------
+    # 2. Security headers
+    # ---------------------------------------------------------------------
+    # These are API responses, not pages, so the page-oriented headers are
+    # cheap insurance rather than the main event. CORS is deliberately NOT set
+    # here: Nest already emits it, and two sets of Access-Control-Allow-Origin
+    # headers is an immediate CORS failure in the browser.
+    security-headers:
+      headers:
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: strict-origin-when-cross-origin
+        # 1 year, subdomains included. stsPreload is left OFF on purpose:
+        # turning it on without submitting to the preload list buys nothing,
+        # and once submitted it is very hard to undo for the whole domain.
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: false
+        forceSTSHeader: true
+        permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=()"
+        # An API has no business being framed or embedded.
+        contentSecurityPolicy: "default-src 'none'; frame-ancestors 'none'"
+        customResponseHeaders:
+          # Stop advertising the stack. An empty value removes the header.
+          Server: ""
+          X-Powered-By: ""
+
+    # ---------------------------------------------------------------------
+    # 3. Rate limit (per client IP)
+    # ---------------------------------------------------------------------
+    # rateLimit's sourceCriterion already defaults to the remote address, so
+    # this is per-IP with no further configuration. average/period is the
+    # refill rate; burst is the bucket size, i.e. what a legitimate page load
+    # firing several XHRs at once is allowed to spend instantly.
+    # Exceeding it returns 429.
+    rate-limit:
+      rateLimit:
+        average: 50
+        period: 1s
+        burst: 100
+
+    # ---------------------------------------------------------------------
+    # 4. Concurrency cap (per client IP)
+    # ---------------------------------------------------------------------
+    # THE gotcha in this file: inFlightReq's sourceCriterion defaults to
+    # requestHost, NOT to the client IP. Left at the default this would be one
+    # shared pool of 40 for every visitor of a host -- a single slow client
+    # could starve everyone, and one attacker could trivially fill it. The
+    # explicit ipStrategy makes the cap per-IP. (depth 0 with no excludedIPs
+    # resolves to the TCP remote address; see the header comment.)
+    inflight:
+      inFlightReq:
+        amount: 40
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+
+    # ---------------------------------------------------------------------
+    # Targeted middlewares, attached per-router rather than per-entrypoint
+    # ---------------------------------------------------------------------
+
+    # Login and password-reset endpoints. Credential stuffing is the attack an
+    # IP-reputation list is worst at, because the first few hundred attempts
+    # look like ordinary traffic. 1 req/s sustained with a burst of 5 is
+    # generous for a human and useless for a bot.
+    auth-rate-limit:
+      rateLimit:
+        average: 10
+        period: 10s
+        burst: 5
+
+    # PDF generation runs Puppeteer, which forks a Chromium per request. On a
+    # 1.9GB box a handful of concurrent PDF requests is a self-inflicted OOM,
+    # so this is as much a stability guard as an anti-abuse one.
+    pdf-limit:
+      inFlightReq:
+        amount: 2
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+
+    pdf-rate-limit:
+      rateLimit:
+        average: 5
+        period: 1m
+        burst: 3
+
+    # Body size caps. nginx had client_max_body_size per vhost; this is the
+    # equivalent. memRequestBodyBytes is what is held in RAM before spilling
+    # to disk -- kept well under the memory budget.
+    body-small:
+      buffering:
+        maxRequestBodyBytes: 1048576
+        memRequestBodyBytes: 262144
+
+    body-upload:
+      buffering:
+        maxRequestBodyBytes: 52428800
+        memRequestBodyBytes: 1048576
+
+    # Dashboard access. sourceRange must be filled in with real admin IPs
+    # before the dashboard router is enabled; as shipped it allows only
+    # loopback, so it fails closed.
+    admin-allowlist:
+      ipAllowList:
+        sourceRange:
+          - 127.0.0.1/32
+        rejectStatusCode: 404
+
+    dashboard-auth:
+      basicAuth:
+        usersFile: /etc/traefik/dynamic/dashboard-users

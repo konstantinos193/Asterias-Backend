@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types, Model } from 'mongoose';
 import { ApiProperty } from '@nestjs/swagger';
 import { Room, RoomDocument } from './room.model';
+import { bumpRevisionOnWrite } from '../availability/availability-revision';
 
 export type BookingDocument = Booking & Document & {
   totalGuests: number;
@@ -35,8 +36,11 @@ export class Booking {
     type: {
       firstName: { type: String, required: true, trim: true },
       lastName: { type: String, required: true, trim: true },
-      email: { type: String, required: true, trim: true, lowercase: true },
-      phone: { type: String, required: true, trim: true },
+      // Contact details are required of a guest booking online, but a walk-in
+      // written down at the desk may have neither. Anything that emails a guest
+      // skips a booking without an address rather than failing on it.
+      email: { type: String, default: '', trim: true, lowercase: true },
+      phone: { type: String, default: '', trim: true },
       specialRequests: { type: String, default: '' },
       language: { type: String, enum: ['el', 'en', 'de'], default: 'en' }
     }
@@ -176,6 +180,16 @@ export class Booking {
   @Prop({ default: null })
   depositPaidAt: Date;
 
+  /**
+   * A guest asked to pay on arrival and the property has not accepted it yet.
+   * Such a request holds no room — see occupyingBookingFilter — because
+   * nothing has been paid and anyone can send one. Cleared when the owner
+   * confirms the booking.
+   */
+  @ApiProperty()
+  @Prop({ default: false })
+  awaitingPropertyConfirmation: boolean;
+
   @ApiProperty()
   @Prop({ default: false })
   postCheckoutEmailSent: boolean;
@@ -231,6 +245,9 @@ export class Booking {
 }
 
 export const BookingSchema = SchemaFactory.createForClass(Booking);
+
+// Any booking write changes what is for sale, so the cached availability goes.
+bumpRevisionOnWrite(BookingSchema);
 
 // Index for better query performance
 BookingSchema.index({ roomId: 1, checkIn: 1, checkOut: 1 });

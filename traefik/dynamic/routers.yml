@@ -1,0 +1,142 @@
+# Routers and services: a 1:1 translation of the five nginx vhosts that used to
+# live in /etc/nginx/sites-enabled.
+#
+# Traefik runs on the host network, so every upstream is 127.0.0.1:<port> --
+# exactly the proxy_pass target nginx used. That is what keeps this conversion
+# contained: the other three projects' compose files are untouched, and their
+# containers keep publishing the same host ports they always did.
+#
+# The protection chain (crowdsec, security-headers, rate-limit, inflight) is
+# attached to the websecure entrypoint in traefik.yml, so it applies to every
+# router here without being named. Routers only list the EXTRA middlewares they
+# need; entrypoint middlewares run first, then the router's own.
+
+http:
+  routers:
+
+    # ---- api.asteriashome.gr -------------------------------------------
+    # The service lives in services-asterias.yml because deploy.sh rewrites it
+    # on every blue-green cutover.
+    asterias:
+      rule: "Host(`api.asteriashome.gr`)"
+      entryPoints: [websecure]
+      service: asterias
+      middlewares:
+        - body-small@file
+
+    # Puppeteer forks a Chromium per PDF. Higher priority than the catch-all
+    # above so these paths get the tight caps instead of the general ones.
+    asterias-pdf:
+      rule: "Host(`api.asteriashome.gr`) && PathPrefix(`/api/pdf`)"
+      entryPoints: [websecure]
+      service: asterias
+      priority: 100
+      middlewares:
+        - pdf-rate-limit@file
+        - pdf-limit@file
+        - body-small@file
+
+    # Login / registration / password reset: the credential-stuffing surface.
+    asterias-auth:
+      rule: "Host(`api.asteriashome.gr`) && PathPrefix(`/api/auth`)"
+      entryPoints: [websecure]
+      service: asterias
+      priority: 100
+      middlewares:
+        - auth-rate-limit@file
+        - body-small@file
+
+    # Image upload needs the big body cap, like nginx's client_max_body_size.
+    asterias-images:
+      rule: "Host(`api.asteriashome.gr`) && PathPrefix(`/api/images`)"
+      entryPoints: [websecure]
+      service: asterias
+      priority: 100
+      middlewares:
+        - body-upload@file
+
+    # ---- api.kyklosedu.gr ----------------------------------------------
+    # Kept pointing at the project's own nginx container on :8081 rather than
+    # at Nest directly: that nginx holds the 50MB body cap and the 300s upload
+    # timeouts this project needs, and bypassing it is a separate change.
+    kyklos:
+      rule: "Host(`api.kyklosedu.gr`)"
+      entryPoints: [websecure]
+      service: kyklos
+      middlewares:
+        - body-upload@file
+
+    # ---- api.adinfinity.gr ---------------------------------------------
+    adinfinity:
+      rule: "Host(`api.adinfinity.gr`)"
+      entryPoints: [websecure]
+      service: adinfinity
+      middlewares:
+        - body-small@file
+
+    # ---- mail.adinfinity.gr --------------------------------------------
+    # stalwart's admin UI, running on the host (not in Docker) on :8080.
+    # An admin panel has no reason to be open to the internet; fill in
+    # admin-allowlist's sourceRange and this becomes genuinely closed.
+    mail-admin:
+      rule: "Host(`mail.adinfinity.gr`)"
+      entryPoints: [websecure]
+      service: mail-admin
+      middlewares:
+        - auth-rate-limit@file
+        - body-upload@file
+
+    # ---- api.melissourgoi.dev ------------------------------------------
+    # The only vhost nginx served on plain :80 with no certificate -- and as of
+    # the conversion the name has NO DNS record at all, so it receives no real
+    # traffic and no certificate can be issued for it.
+    #
+    # The router is kept so the project is not silently dropped, but be aware:
+    # Traefik redirects :80 -> :443 globally, and there is no cert for this
+    # name, so a browser would get a name mismatch. When the project comes
+    # back, point DNS at this box and the ACME resolver will issue for it.
+    # It is deliberately left out of cutover.sh's health gate for this reason.
+    melissourgoi:
+      rule: "Host(`api.melissourgoi.dev`)"
+      entryPoints: [websecure]
+      service: melissourgoi
+      middlewares:
+        - body-upload@file
+
+    # ---- Traefik dashboard ---------------------------------------------
+    # On the loopback-only `traefik` entrypoint, so it is not internet
+    # reachable at all; reach it over an SSH tunnel:
+    #   ssh -L 8099:127.0.0.1:8099 asterias
+    # The allowlist and basic auth are belt-and-braces behind that.
+    dashboard:
+      rule: "PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
+      entryPoints: [traefik]
+      service: api@internal
+      middlewares:
+        - admin-allowlist@file
+        - dashboard-auth@file
+
+  services:
+    kyklos:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8081"
+        passHostHeader: true
+
+    adinfinity:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:3011"
+        passHostHeader: true
+
+    melissourgoi:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8082"
+        passHostHeader: true
+
+    mail-admin:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8080"
+        passHostHeader: true

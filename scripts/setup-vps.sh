@@ -9,7 +9,11 @@ REPO_DIR="/opt/asterias-backend"
 
 echo "=== Installing Docker ==="
 apt-get update
-apt-get install -y ca-certificates curl gnupg
+# logrotate is not in the Ubuntu 24.04 cloud image. The nginx package still
+# drops /etc/logrotate.d/nginx, so the host looks like it rotates and does not:
+# this box ran from May to October 2026 on one 85MB access.log, and neither
+# disk-guard nor docker-reclaim covers /var/log/nginx.
+apt-get install -y ca-certificates curl gnupg logrotate
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 chmod a+r /etc/apt/keyrings/docker.gpg

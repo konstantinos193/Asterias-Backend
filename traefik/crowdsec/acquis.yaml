@@ -1,0 +1,30 @@
+# What CrowdSec reads to make decisions.
+#
+# Traefik's access log is the whole input. The crowdsecurity/traefik collection
+# ships the parser for Traefik's JSON access-log format, which is why
+# traefik.yml sets `format: json` -- with the default CLF text format the
+# parser silently matches nothing and CrowdSec bans no one while looking
+# perfectly healthy.
+---
+filenames:
+  - /var/log/traefik/access.log
+labels:
+  type: traefik
+
+---
+# The AppSec (WAF) listener. This is not a log source: it is the HTTP endpoint
+# the Traefik plugin posts requests to for inline inspection. It has to be
+# declared here for the server to start at all.
+#
+# appsec_config selects the rule bundle. This points at the local bundle in
+# crowdsec/appsec-configs/appsec-api.yaml rather than crowdsecurity/appsec-
+# default, because the shipped default leaves the OWASP Core Rule Set out
+# entirely -- without it the WAF catches known CVE paths and .env/.git probes
+# but passes generic SQLi, traversal and SSTI payloads straight through. The
+# local bundle adds CRS and documents why it runs out of band.
+listen_addr: 0.0.0.0:7422
+appsec_config: asterias/appsec-api
+name: appsec
+source: appsec
+labels:
+  type: appsec

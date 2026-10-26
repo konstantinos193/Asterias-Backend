@@ -5,6 +5,7 @@ import { Room, RoomDocument } from '../models/room.model';
 import { SeasonalPricing, SeasonalPricingDocument } from '../models/seasonal-pricing.model';
 import { Offer, OfferDocument } from '../models/offer.model';
 import { SettingsService } from '../settings/settings.service';
+import { stayNights } from '../availability/availability-rules';
 
 export type RoomType = '2beds' | '3beds' | '4beds';
 
@@ -60,10 +61,13 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export interface TaxBreakdown {
   vatRate: number;
+  /** VAT charged ON TOP of the subtotal. Always 0: the rates include VAT. */
   vatAmount: number;
+  /** VAT already inside the subtotal, for the receipt. */
+  vatIncluded: number;
   municipalFee: number;
   environmentalTax: number;
-  total: number; // subtotal + taxes/fees
+  total: number; // subtotal + fees
 }
 
 export interface AppliedOffer {
@@ -228,22 +232,66 @@ export class PricingService {
     adults: number | string,
     children: number | string = 0,
   ): Promise<StayQuote> {
+    const room = await this.resolveRoom(roomOrId);
+    const guests = (parseInt(String(adults)) || 0) + (parseInt(String(children)) || 0);
+    const start = this.toUtcMidnight(new Date(checkIn));
+    const end = this.toUtcMidnight(new Date(checkOut));
+    const nights = stayNights(start, end);
+
+    // Fetch active periods overlapping the stay once, then resolve per night.
+    const periods =
+      nights > 0 ? await this.activePeriods(start, new Date(end.getTime() - this.DAY_MS)) : [];
+
+    return this.buildQuote(room, start, nights, periods, guests);
+  }
+
+  /**
+   * The same quote as quoteStay, for one room at several guest counts, with the
+   * seasonal periods read once. The room-combination search needs a price for
+   * every occupancy it is considering; it used to work them out from
+   * `room.price` on its own, so the guest was shown a price that ignored
+   * seasonal rates and then charged the real one at checkout.
+   */
+  async quoteStayByGuests(
+    roomOrId: RoomDocument | string | Types.ObjectId | any,
+    checkIn: Date | string,
+    checkOut: Date | string,
+    guestCounts: number[],
+  ): Promise<Map<number, StayQuote>> {
+    const room = await this.resolveRoom(roomOrId);
+    const start = this.toUtcMidnight(new Date(checkIn));
+    const end = this.toUtcMidnight(new Date(checkOut));
+    const nights = stayNights(start, end);
+
+    const periods =
+      nights > 0 ? await this.activePeriods(start, new Date(end.getTime() - this.DAY_MS)) : [];
+
+    const quotes = new Map<number, StayQuote>();
+    for (const guests of new Set(guestCounts)) {
+      quotes.set(guests, this.buildQuote(room, start, nights, periods, guests));
+    }
+    return quotes;
+  }
+
+  private async resolveRoom(roomOrId: RoomDocument | string | Types.ObjectId | any) {
     const room =
       typeof roomOrId === 'string' || roomOrId instanceof Types.ObjectId
         ? await this.roomModel.findById(roomOrId).lean()
         : roomOrId;
     if (!room) throw new NotFoundException('Room not found');
+    return room;
+  }
 
-    const guests = (parseInt(String(adults)) || 0) + (parseInt(String(children)) || 0);
-    const start = this.toUtcMidnight(new Date(checkIn));
-    const end = this.toUtcMidnight(new Date(checkOut));
-    const nights = Math.max(0, Math.round((end.getTime() - start.getTime()) / this.DAY_MS));
+  /** Price `nights` nights from `start` for `guests`, against already-read periods. */
+  private buildQuote(
+    room: any,
+    start: Date,
+    nights: number,
+    periods: any[],
+    guests: number,
+  ): StayQuote {
     const rateTier = this.rateTierFor(guests);
     const adjustment = Number(room.priceAdjustment) || 0;
-
-    // Fetch active periods overlapping the stay once, then resolve per night.
-    const periods =
-      nights > 0 ? await this.activePeriods(start, new Date(end.getTime() - this.DAY_MS)) : [];
 
     const fallback = this.basePerNight(room, guests);
 
@@ -330,7 +378,7 @@ export class PricingService {
       return none('room');
     }
 
-    const nights = Math.round((end.getTime() - start.getTime()) / this.DAY_MS);
+    const nights = stayNights(start, end);
     if (offer.minStay && nights < offer.minStay) return none('min_stay');
     if (offer.maxStay && nights > offer.maxStay) return none('max_stay');
 
@@ -350,8 +398,18 @@ export class PricingService {
   }
 
   /**
-   * Apply VAT + municipal + environmental tax to a pre-tax subtotal, using the
-   * same rates/fallbacks as the existing payment flow so card/cash totals agree.
+   * Add the fees a guest owes on top of the room subtotal.
+   *
+   * VAT is NOT one of them. The owner's price list is quoted VAT-inclusive and
+   * the site tells the guest so, so `taxRate` describes the VAT already inside
+   * the rate: it is reported in `vatIncluded` for the receipt and added to
+   * nothing. It used to be multiplied onto the subtotal, and because the live
+   * settings document still says 13 while the code's own default is 0, every
+   * card and cash total came out 13% above the advertised price (€60 a night
+   * billed as €69.80 with the stay fee).
+   *
+   * `vatAmount` stays in the breakdown as "VAT added on top", which is always 0
+   * now; the checkout summary only prints that line when it is non-zero.
    */
   async applyTaxes(subtotal: number, nights: number, guests: number): Promise<TaxBreakdown> {
     const settings = await this.settingsService.getSettings();
@@ -359,11 +417,13 @@ export class PricingService {
     const municipalFee = (settings?.municipalFee ?? TAX_DEFAULTS.municipalFee) * nights;
     const environmentalTax =
       (settings?.environmentalTax ?? TAX_DEFAULTS.environmentalTax) * nights * Math.max(guests, 1);
-    const vatAmount = round2(subtotal * vatRate);
-    const total = round2(subtotal + vatAmount + municipalFee + environmentalTax);
+    // VAT contained in the subtotal, not charged again on top of it.
+    const vatIncluded = vatRate > 0 ? round2(subtotal - subtotal / (1 + vatRate)) : 0;
+    const total = round2(subtotal + municipalFee + environmentalTax);
     return {
       vatRate,
-      vatAmount,
+      vatAmount: 0,
+      vatIncluded,
       municipalFee: round2(municipalFee),
       environmentalTax: round2(environmentalTax),
       total,

@@ -8,6 +8,7 @@ import { RoomBlockedDate, RoomBlockedDateSchema } from '../models/room-blocked-d
 import { SettingsModule } from '../settings/settings.module';
 import { PricingModule } from '../pricing/pricing.module';
 import { AuthModule } from '../auth/auth.module';
+import { AvailabilityEngineModule } from '../availability/availability-engine.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AuthModule } from '../auth/auth.module';
     SettingsModule,
     PricingModule,
     AuthModule,
+    AvailabilityEngineModule,
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService],

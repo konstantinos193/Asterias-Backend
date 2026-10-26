@@ -48,6 +48,16 @@ export class SeasonalPricing {
   @ApiProperty()
   @Prop({ default: true })
   active: boolean;
+
+  /**
+   * Who wrote the period. The admin calendar owns one single-night period per
+   * priced night ('calendar'), which is how a price typed on one date wins over
+   * the season around it and can be found again to edit or clear. Periods from
+   * the seasonal page are 'manual' and the calendar never rewrites them.
+   */
+  @ApiProperty()
+  @Prop({ enum: ['manual', 'calendar'], default: 'manual' })
+  origin: 'manual' | 'calendar';
 }
 
 export const SeasonalPricingSchema = SchemaFactory.createForClass(SeasonalPricing);

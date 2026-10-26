@@ -8,6 +8,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { MongoSanitizePipe } from './common/pipes/mongo-sanitize.pipe';
 import { EmailService } from './email/email.service';
 import { ScheduledTasksService } from './scheduled-tasks/scheduled-tasks.service';
 import { MemoryMonitorService } from './utils/memory-monitor.service';
@@ -21,9 +22,19 @@ async function bootstrap() {
   app.use(helmet());
   app.use(cookieParser());
 
-  // Request logging middleware + keep the API out of search indexes
+  // nginx sits in front of this process and sets X-Forwarded-For. Without
+  // trusting it, every request looks like it comes from the proxy, so the rate
+  // limiter would count the whole internet as one client — one attacker could
+  // lock out all the guests at once, and would never hit the login limit alone.
+  app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
+
+  // Request logging + keep the API out of search indexes.
+  // Only the path is logged: query strings carry Stripe session ids, reset
+  // tokens and guest email addresses, and these logs are not a safe place for
+  // them.
   app.use((req, res, next) => {
-    console.log(`🔍 ${req.method} ${req.url} - Origin: ${req.headers.origin || 'No origin'}`);
+    const path = req.url.split('?')[0];
+    console.log(`🔍 ${req.method} ${path} - Origin: ${req.headers.origin || 'No origin'}`);
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     next();
   });
@@ -34,19 +45,39 @@ async function bootstrap() {
     res.status(204).end();
   });
 
-  // Serve static assets from public/ (logo, landing.js, review photos, etc.)
+  // Serve static assets from public/ (logo, review photos, etc.)
   app.useStaticAssets(join(process.cwd(), 'public'));
 
-  // CORS configuration
+  // CORS configuration.
+  // The localhost origins were allowed in production too, so anything served
+  // from a developer's machine — or any page that can get the browser to a
+  // localhost origin — was a trusted caller against the live API.
+  const isProduction = process.env.NODE_ENV === 'production';
+  const configuredOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  const allowedOrigins = configuredOrigins.length
+    ? configuredOrigins
+    : isProduction
+      ? ['https://asteriashome.gr', 'https://www.asteriashome.gr']
+      : ['http://localhost:3000', 'http://localhost:3001'];
+
   app.enableCors({
-    origin: ['http://localhost:3000', 'https://asteriashome.gr', 'http://localhost:3001'],
+    origin: allowedOrigins,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    maxAge: 600,
   });
 
   // Global pipes
+  // Order matters: the sanitizer runs first, so Mongo operators are refused
+  // even on handlers whose body or query is untyped and which ValidationPipe
+  // therefore cannot whitelist.
   app.useGlobalPipes(
+    new MongoSanitizePipe(),
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,

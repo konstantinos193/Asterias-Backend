@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Offer, OfferDocument, OfferModel } from '../models/offer.model';
 import { Room } from '../models/room.model';
+import { stayNights } from '../availability/availability-rules';
 
 export interface CreateOfferDto {
   title: string;
@@ -175,7 +176,7 @@ export class OffersService {
       }
 
       // Check minimum stay requirement
-      const nights = Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / (1000 * 60 * 60 * 24));
+      const nights = stayNights(checkIn, checkOut);
       if (offer.minStay && nights < offer.minStay) {
         return false;
       }
@@ -220,7 +221,7 @@ export class OffersService {
     }
 
     // Check minimum stay requirement
-    const nights = Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / (1000 * 60 * 60 * 24));
+    const nights = stayNights(checkIn, checkOut);
     if (offer.minStay && nights < offer.minStay) {
       throw new BadRequestException(`Minimum stay requirement is ${offer.minStay} nights`);
     }

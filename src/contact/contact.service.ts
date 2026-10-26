@@ -4,6 +4,10 @@ import { Model, Types } from 'mongoose';
 import { Contact, ContactDocument, ContactModel } from '../models/contact.model';
 import { User, UserDocument } from '../models/user.model';
 import { EmailService } from '../email/email.service';
+import { safeSort } from '../common/sort';
+
+/** Fields a caller may sort contact messages by. */
+const SORTABLE_FIELDS = ['createdAt', 'updatedAt', 'status', 'priority'] as const;
 
 @Injectable()
 export class ContactService {
@@ -73,8 +77,7 @@ export class ContactService {
     if (assignedTo) filter.assignedTo = new Types.ObjectId(assignedTo);
 
     // Build sort
-    const sort: any = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    const sort = safeSort(sortBy, SORTABLE_FIELDS, 'createdAt', sortOrder);
 
     // Pagination
     const skip = (page - 1) * limit;
