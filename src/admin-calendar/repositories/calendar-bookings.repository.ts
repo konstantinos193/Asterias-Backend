@@ -1,3 +1,4 @@
+import { BookingWriter } from '../../bookings/domain/booking-writer.service';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -75,6 +76,7 @@ const GRID_FIELDS =
 @Injectable()
 export class CalendarBookingsRepository {
   constructor(
+    private readonly writer: BookingWriter,
     @InjectModel(Booking.name) private readonly bookingModel: Model<BookingDocument>,
     private readonly bookingNumbers: BookingNumberService,
   ) {}
@@ -116,9 +118,8 @@ export class CalendarBookingsRepository {
       .lean<BookingRow[]>();
   }
 
-  async create(booking: NewBooking): Promise<BookingRow> {
-    const created = new this.bookingModel(booking);
-    await created.save();
+  async create(booking: NewBooking, force = false): Promise<BookingRow> {
+    const created = await this.writer.create({ ...booking }, { pricing: 'negotiated', inventory: force ? 'override' : 'reserve' });
     return created.toObject() as unknown as BookingRow;
   }
 

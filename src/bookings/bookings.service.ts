@@ -1,3 +1,4 @@
+import { BookingWriter } from './domain/booking-writer.service';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
@@ -19,6 +20,7 @@ import { SettingsService } from '../settings/settings.service';
 @Injectable()
 export class BookingsService {
   constructor(
+    private readonly writer: BookingWriter,
     @InjectModel(Booking.name) private bookingModel: BookingModel,
     @InjectModel(BookingHistory.name) private bookingHistoryModel: Model<BookingHistoryDocument>,
     @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
@@ -75,7 +77,7 @@ export class BookingsService {
         );
         const taxes = await this.pricingService.applyTaxes(quote.subtotal, quote.nights, occupancy);
 
-        const booking = new this.bookingModel({
+        created = await this.writer.create({
           ...rest,
           bookingNumber: bookingNumber || (await this.bookingNumbers.next(session)),
           roomId: new Types.ObjectId(roomId),
@@ -89,9 +91,7 @@ export class BookingsService {
           vatAmount: taxes.vatAmount,
           municipalFee: taxes.municipalFee,
           environmentalTax: taxes.environmentalTax,
-        });
-
-        created = await booking.save({ session });
+        }, { session, pricing: totalAmount == null ? 'quote' : 'negotiated' });
       });
 
       return created;
@@ -399,8 +399,7 @@ export class BookingsService {
               roomCombination: combination,
             };
 
-            const booking = new this.bookingModel(bookingData);
-            bookings.push(await booking.save({ session }));
+            bookings.push(await this.writer.create(bookingData, { session, pricing: 'quote' }));
           }
         }
 

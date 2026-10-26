@@ -1,3 +1,4 @@
+import { BookingWriter } from '../bookings/domain/booking-writer.service';
 import { Inject, Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { STRIPE_CLIENT, StripeClient } from '../stripe/stripe.module';
 import { ClientSession, Connection, Model } from 'mongoose';
@@ -67,6 +68,7 @@ export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
   constructor(
+    private readonly writer: BookingWriter,
     @InjectModel(Room.name) private roomModel: Model<Room>,
     @InjectModel(Booking.name) private bookingModel: Model<Booking>,
     @InjectConnection() private connection: Connection,
@@ -461,7 +463,7 @@ export class PaymentsService {
           session,
         );
 
-        booking = new this.bookingModel({
+        booking = await this.writer.create({
           roomId,
           guestInfo: { ...guestInfo, specialRequests: specialRequests || '' },
           checkIn: new Date(checkIn),
@@ -482,8 +484,7 @@ export class PaymentsService {
           bookingStatus: BOOKING_STATUS.CONFIRMED,
           stripePaymentIntentId: paymentIntentId,
           bookingNumber: await this.bookingNumbers.next(session),
-        });
-        await booking.save({ session });
+        }, { session, pricing: 'paid' });
       });
     } catch (error) {
       // Another process got there first. During a blue/green cutover two
@@ -690,7 +691,7 @@ export class PaymentsService {
           session,
         );
 
-        booking = new this.bookingModel({
+        booking = await this.writer.create({
           roomId,
           guestInfo: { ...guestInfo, specialRequests: specialRequests || '' },
           checkIn: new Date(checkIn),
@@ -710,8 +711,7 @@ export class PaymentsService {
           depositAmount: isAdmin && depositAmount != null ? Number(depositAmount) : 0,
           depositPaid: isAdmin && depositPaid === true,
           depositPaidAt: isAdmin && depositPaid === true ? new Date() : null,
-        });
-        await booking.save({ session });
+        }, { session, pricing: isAdmin ? 'negotiated' : 'quote' });
       });
     } finally {
       await session.endSession();

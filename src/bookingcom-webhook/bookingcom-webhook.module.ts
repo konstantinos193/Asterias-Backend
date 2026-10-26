@@ -1,3 +1,4 @@
+import { BookingWriterModule } from '../bookings/domain/booking-writer.module';
 import { PersistenceModule } from '../database/persistence.module';
 import { Module } from '@nestjs/common';
 import { BookingComWebhookController } from './bookingcom-webhook.controller';
@@ -7,6 +8,7 @@ import { BookingNumberModule } from '../common/booking-number/booking-number.mod
 @Module({
   imports: [
     PersistenceModule,
+    BookingWriterModule,
     BookingNumberModule,
   ],
   controllers: [BookingComWebhookController],

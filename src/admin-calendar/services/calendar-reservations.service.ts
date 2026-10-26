@@ -76,7 +76,7 @@ export class CalendarReservationsService {
         specialRequests: '',
         language: 'el',
       },
-    });
+    }, dto.force === true);
 
     return toReservation(created, new Map([[dto.roomId, room.name]]));
   }

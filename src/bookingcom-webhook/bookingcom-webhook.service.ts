@@ -1,3 +1,4 @@
+import { BookingWriter } from '../bookings/domain/booking-writer.service';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -19,6 +20,7 @@ export class BookingComWebhookService {
   private readonly webhookSecret: string;
 
   constructor(
+    private readonly writer: BookingWriter,
     @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
     @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>,
     private readonly bookingNumbers: BookingNumberService,
@@ -104,7 +106,7 @@ export class BookingComWebhookService {
       // place that decides what a booking number looks like.
       const bookingNumber = this.bookingNumbers.external('BCM', externalBooking.booking_id);
 
-      const newBooking = new this.bookingModel({
+      const newBooking = await this.writer.create({
         bookingNumber,
         roomId: room._id,
         bookingcom_booking_id: externalBooking.booking_id,
@@ -132,9 +134,7 @@ export class BookingComWebhookService {
         source: BOOKING_SOURCE.BOOKINGCOM,
         paymentMethod: PAYMENT_METHOD.CARD,
         paymentStatus: PAYMENT_STATUS.PAID,
-      });
-
-      await newBooking.save();
+      }, { pricing: 'external', inventory: 'override' });
       this.logger.log(`Successfully created booking ${newBooking._id} from Booking.com webhook.`);
       return { status: 'success', message: 'Booking created successfully', bookingId: newBooking._id };
 

@@ -1,3 +1,4 @@
+import { BookingWriterModule } from './domain/booking-writer.module';
 import { SettingsModule } from '../settings/settings.module';
 import { PersistenceModule } from '../database/persistence.module';
 import { Module } from '@nestjs/common';
@@ -13,6 +14,7 @@ import { BookingNumberModule } from '../common/booking-number/booking-number.mod
 @Module({
   imports: [
     PersistenceModule,
+    BookingWriterModule,
     EmailModule,
     SettingsModule,
     AuthModule,
