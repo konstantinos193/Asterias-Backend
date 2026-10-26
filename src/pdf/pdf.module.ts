@@ -1,21 +1,17 @@
+import { PersistenceModule } from '../database/persistence.module';
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { PdfController } from './pdf.controller';
 import { PdfService } from './pdf.service';
-import { Booking, BookingSchema } from '../models/booking.model';
-import { Room, RoomSchema } from '../models/room.model';
+import { BrowserPoolService } from './browser-pool.service';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: Booking.name, schema: BookingSchema },
-      { name: Room.name, schema: RoomSchema },
-    ]),
+    PersistenceModule,
     AuthModule,
   ],
   controllers: [PdfController],
-  providers: [PdfService],
+  providers: [PdfService, BrowserPoolService],
   exports: [PdfService],
 })
 export class PdfModule {}

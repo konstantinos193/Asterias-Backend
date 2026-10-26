@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types, Model } from 'mongoose';
 import { ApiProperty } from '@nestjs/swagger';
+import { CONTACT_STATUS, CONTACT_STATUSES, ContactStatus } from '../common/enums';
 
 export type ContactDocument = Contact & Document & {
   markAsRead(): Promise<ContactDocument>;
@@ -10,8 +11,8 @@ export type ContactDocument = Contact & Document & {
 };
 
 export interface ContactModel extends Model<ContactDocument> {
-  getUnread(): Promise<ContactDocument[]>;
-  getByStatus(status: string): Promise<ContactDocument[]>;
+  // getUnread() and getByStatus() are gone: no callers, and both duplicated a
+  // query ContactService already builds with its own filtering and paging.
   getStats(): Promise<{
     total: number;
     unread: number;
@@ -42,8 +43,8 @@ export class Contact {
   message: string;
 
   @ApiProperty()
-  @Prop({ enum: ['UNREAD', 'READ', 'REPLIED', 'CLOSED'], default: 'UNREAD' })
-  status: 'UNREAD' | 'READ' | 'REPLIED' | 'CLOSED';
+  @Prop({ enum: CONTACT_STATUSES, default: CONTACT_STATUS.UNREAD })
+  status: ContactStatus;
 
   @ApiProperty()
   @Prop({ enum: ['LOW', 'MEDIUM', 'HIGH', 'URGENT'], default: 'MEDIUM' })
@@ -94,13 +95,13 @@ ContactSchema.virtual('fullName').get(function(this: ContactDocument) {
 
 // Method to mark as read
 ContactSchema.methods.markAsRead = function(this: ContactDocument): Promise<ContactDocument> {
-  this.status = 'READ';
+  this.status = CONTACT_STATUS.READ;
   return this.save();
 };
 
 // Method to reply to contact
 ContactSchema.methods.reply = function(this: ContactDocument, responseMessage: string, respondedBy: Types.ObjectId): Promise<ContactDocument> {
-  this.status = 'REPLIED';
+  this.status = CONTACT_STATUS.REPLIED;
   this.response = {
     message: responseMessage,
     respondedBy: respondedBy,
@@ -111,18 +112,8 @@ ContactSchema.methods.reply = function(this: ContactDocument, responseMessage: s
 
 // Method to close contact
 ContactSchema.methods.close = function(this: ContactDocument): Promise<ContactDocument> {
-  this.status = 'CLOSED';
+  this.status = CONTACT_STATUS.CLOSED;
   return this.save();
-};
-
-// Static method to get unread contacts
-ContactSchema.statics.getUnread = function(): Promise<ContactDocument[]> {
-  return this.find({ status: 'UNREAD' }).sort({ createdAt: -1 });
-};
-
-// Static method to get contacts by status
-ContactSchema.statics.getByStatus = function(status: string): Promise<ContactDocument[]> {
-  return this.find({ status } as any).sort({ createdAt: -1 });
 };
 
 // Static method to get contact statistics
@@ -141,7 +132,7 @@ ContactSchema.statics.getStats = async function(): Promise<{
   ]);
 
   const total = await this.countDocuments();
-  const unread = await this.countDocuments({ status: 'UNREAD' });
+  const unread = await this.countDocuments({ status: CONTACT_STATUS.UNREAD });
 
   return {
     total,

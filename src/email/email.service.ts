@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { ConfigService } from '@nestjs/config';
 import { t } from '../translations/translations';
+import { SettingsService } from '../settings/settings.service';
 
 export interface EmailData {
   bookingId?: string;
@@ -24,12 +25,22 @@ export interface EmailData {
   to?: string;
 }
 
+/**
+ * The outcome of an attempt to send.
+ *
+ * `success` means a transporter accepted the message, and nothing else — a
+ * caller that records "the guest has been emailed" must check it. Several did
+ * not, and because sendEmail() returns errors as values rather than throwing,
+ * `await` resolved on failure and the flag was set anyway.
+ */
 export interface EmailResult {
   success: boolean;
   messageId?: string;
   message?: string;
   error?: string;
   language?: string;
+  /** True when a development logging transporter handled it, so nothing was actually sent. */
+  simulated?: boolean;
 }
 
 @Injectable()
@@ -37,7 +48,10 @@ export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private transporter: nodemailer.Transporter | null = null;
 
-  constructor(private configService: ConfigService) {}
+  constructor(
+    private configService: ConfigService,
+    private readonly settingsService: SettingsService,
+  ) {}
 
   initializeTransporter(): void {
     try {
@@ -46,13 +60,13 @@ export class EmailService {
         this.transporter = nodemailer.createTransport({
           host: this.configService.get('SMTP_HOST'),
           port: this.configService.get('SMTP_PORT') || 587,
-          secure: false,
+          secure: Number(this.configService.get('SMTP_PORT') || 587) === 465,
+          connectionTimeout: 10000,
+          greetingTimeout: 10000,
+          socketTimeout: 60000,
           auth: {
             user: this.configService.get('SMTP_USER'),
             pass: this.configService.get('SMTP_PASS')
-          },
-          tls: {
-            rejectUnauthorized: false
           }
         });
         this.logger.log('✅ Email transporter initialized with SMTP configuration');
@@ -83,34 +97,74 @@ export class EmailService {
         });
         this.logger.log('✅ Email transporter initialized with Gmail service using regular password (LESS SECURE)');
       }
-      // Fallback: Development mode
+      // No credentials at all.
+      //
+      // In development this installs a transporter that logs instead of
+      // sending, which is what makes the app runnable without SMTP. In
+      // production it is a hard failure: a black-hole transporter there means
+      // every booking confirmation reports success and no guest ever hears
+      // back, with nothing to alert on. Config validation already requires
+      // SMTP_* in production, so reaching this branch means something stripped
+      // them after boot.
       else {
-        this.transporter = {
-          sendMail: async (mailOptions) => {
-            this.logger.log('📧 [DEV MODE] Email would be sent:');
-            this.logger.log(`   To: ${mailOptions.to}`);
-            this.logger.log(`   Subject: ${mailOptions.subject}`);
-            this.logger.log(`   Content preview: ${mailOptions.html ? mailOptions.html.substring(0, 100) + '...' : 'No HTML content'}`);
-            this.logger.log('   ---');
-            
-            return Promise.resolve({
-              messageId: 'dev-' + Date.now(),
-              response: 'Email logged (development mode)'
-            } as any);
-          }
-        } as any;
-        this.logger.log('📧 Email transporter initialized in development mode (emails logged to console)');
+        if (this.isProduction) {
+          throw new Error(
+            'No SMTP credentials configured. Set SMTP_HOST, SMTP_USER and SMTP_PASS.',
+          );
+        }
+        this.transporter = this.createLoggingTransporter('DEV MODE');
+        this.logger.warn(
+          'Email transporter running in development mode — messages are logged, not sent',
+        );
       }
     } catch (error: any) {
-      this.logger.error('❌ Failed to initialize email transporter:', error.message);
-      // Fallback to development mode
-      this.transporter = {
-        sendMail: async (mailOptions) => {
-          this.logger.log(`📧 [FALLBACK MODE] Email would be sent: ${mailOptions.to}`);
-          return Promise.resolve({ messageId: 'fallback-' + Date.now() } as any);
-        }
-      } as any;
+      this.logger.error(`Failed to initialize email transporter: ${error.message}`);
+
+      // This was the dangerous one. It was not gated on NODE_ENV, so if SMTP
+      // credentials were wrong or createTransport threw in production, the
+      // service installed a transporter that discarded every message and
+      // reported `{ success: true, messageId: 'fallback-...' }` forever.
+      //
+      // In production the failure is now raised: it happens during bootstrap,
+      // so the container exits and the blue/green cutover does not promote an
+      // instance that cannot email anyone.
+      if (this.isProduction) {
+        throw error;
+      }
+
+      this.transporter = this.createLoggingTransporter('FALLBACK MODE');
+      this.logger.warn('Email transporter fell back to logging mode — messages are not sent');
     }
+  }
+
+  async verifyTransporter(): Promise<void> {
+    if (this.isProduction) {
+      if (!this.transporter) throw new Error('Email transporter is not initialized');
+      await this.transporter.verify();
+    }
+  }
+
+  private get isProduction(): boolean {
+    return this.configService.get<string>('NODE_ENV') === 'production';
+  }
+
+  /**
+   * A transporter that logs what would have been sent. Development only — see
+   * initializeTransporter for why this must never be installed in production.
+   */
+  private createLoggingTransporter(label: string): nodemailer.Transporter {
+    return {
+      sendMail: async (mailOptions: any) => {
+        this.logger.log(
+          `[${label}] would send "${mailOptions.subject}" to ${mailOptions.to}`,
+        );
+        return {
+          messageId: `${label.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
+          response: `Email logged (${label})`,
+          simulated: true,
+        } as any;
+      },
+    } as any;
   }
 
   /**
@@ -148,11 +202,42 @@ export class EmailService {
     return 'el';
   }
 
+  /**
+   * Which admin setting switches each kind of email off.
+   *
+   * These flags existed in the settings schema and in the admin panel and
+   * nothing read any of them: the owner could turn off email notifications and
+   * every message kept going out. Checked in one place here rather than at each
+   * call site, so a new caller is covered by default.
+   *
+   * A type absent from this map is not gated — the contact-form notification
+   * and the admin's own test email are deliberate, one-off actions.
+   */
+  private static readonly EMAIL_TYPE_SETTINGS = {
+    bookingConfirmation: 'bookingConfirmations',
+    arrivalReminder: 'reminderNotifications',
+    checkoutThankYou: 'reminderNotifications',
+    newBookingAlert: 'newBookingAlerts',
+    lowInventoryAlert: 'lowInventoryAlerts',
+  } as const;
+
   async sendEmail(type: string, data: EmailData, options: { language?: string; request?: any; to?: string } = {}): Promise<EmailResult> {
     try {
+      const setting = EmailService.EMAIL_TYPE_SETTINGS[type as keyof typeof EmailService.EMAIL_TYPE_SETTINGS];
+      if (setting && !(await this.settingsService.isEmailEnabled(setting))) {
+        this.logger.log(`Skipped ${type}: disabled by the ${setting} setting`);
+        return { success: false, message: `Disabled by the ${setting} setting`, error: 'disabled' };
+      }
+
+      // No transporter means nothing was sent, so this must not report success.
+      // It used to return `{ success: true, message: 'Email sent (simulated)' }`,
+      // which callers that check `result.success` read as delivered — that is
+      // how post-checkout review requests got marked sent without being sent.
       if (!this.transporter) {
-        this.logger.log(`Email transporter not initialized. Email would be sent: ${type} to ${data.guestEmail || options.to}`);
-        return { success: true, message: 'Email sent (simulated)' };
+        this.logger.error(
+          `Email transporter not initialized; dropped ${type} to ${data.guestEmail || options.to}`,
+        );
+        return { success: false, error: 'Email transporter not initialized' };
       }
 
       // Language detection for customer emails
@@ -624,15 +709,16 @@ Automated admin notification from Asterias Homes
       const result = await this.transporter.sendMail(mailOptions);
       this.logger.log(`Email sent successfully: ${type} to ${recipient} in ${language.toUpperCase()}`);
       
-      return { 
-        success: true, 
+      return {
+        success: true,
         messageId: result.messageId,
         message: `Email sent to ${recipient}`,
-        language: language
+        language: language,
+        simulated: (result as any)?.simulated === true,
       };
 
     } catch (error: any) {
-      this.logger.error('Email sending failed:', error);
+      this.logger.error(`Email sending failed for ${type}: ${error.message}`);
       return {
         success: false,
         error: error.message,
@@ -646,7 +732,7 @@ Automated admin notification from Asterias Homes
   }
 
   async sendNewBookingAlert(bookingData: EmailData, options: { to?: string } = {}): Promise<EmailResult> {
-    this.logger.log('📧 Sending new booking alert email to admin', {
+    this.logger.log('Sending new booking alert email to admin', {
       bookingId: bookingData.bookingId,
       guestName: bookingData.guestName,
       guestEmail: bookingData.guestEmail,
@@ -733,7 +819,7 @@ Automated admin notification from Asterias Homes
   }
 
   async sendCheckoutThankYou(data: EmailData, options: { language?: string; request?: any } = {}): Promise<EmailResult> {
-    this.logger.log('📧 Sending post-checkout thank-you email', {
+    this.logger.log('Sending post-checkout thank-you email', {
       bookingId: data.bookingId,
       guestName: data.guestName,
       guestEmail: data.guestEmail
@@ -742,15 +828,16 @@ Automated admin notification from Asterias Homes
     const result = await this.sendEmail('checkoutThankYou', data, options);
 
     if (result.success) {
-      this.logger.log('✅ Post-checkout thank-you email sent successfully');
+      this.logger.log('Post-checkout thank-you email sent successfully');
     } else {
-      this.logger.error('❌ Failed to send post-checkout thank-you email:', result.error || result.message);
+      this.logger.error(`Failed to send post-checkout thank-you email: ${result.error || result.message}`);
     }
 
     return result;
   }
 
   async sendTestEmail(type = 'bookingConfirmation', language = 'el'): Promise<EmailResult> {
+    const settings = await this.settingsService.getEffectiveSettings();
     const testData: EmailData = {
       bookingId: 'TEST123',
       guestName: 'Test Customer',
@@ -759,8 +846,8 @@ Automated admin notification from Asterias Homes
       roomName: 'Traditional Apartment',
       checkIn: new Date(Date.now() + 24 * 60 * 60 * 1000),
       checkOut: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
-      checkInTime: '15:00',
-      checkOutTime: '11:00',
+      checkInTime: settings.checkInTime,
+      checkOutTime: settings.checkOutTime,
       guests: 2,
       totalPrice: 150,
       status: 'confirmed',

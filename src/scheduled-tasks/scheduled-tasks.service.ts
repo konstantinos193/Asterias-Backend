@@ -1,62 +1,59 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression, SchedulerRegistry, Timeout } from '@nestjs/schedule';
 import { EmailService } from '../email/email.service';
+import { SettingsService } from '../settings/settings.service';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Booking } from '../models/booking.model';
 import { Room } from '../models/room.model';
 import { User, UserDocument } from '../models/user.model';
+import { BOOKING_STATUS, GUEST_LANGUAGE } from '../common/enums';
+import { addDays, dayStart, todayAtProperty } from '../availability/availability-rules';
+
+/** A boolean field on Booking used to record that a one-off email went out. */
+type EmailClaimFlag = 'postCheckoutEmailSent' | 'reminderSent';
+
 @Injectable()
-export class ScheduledTasksService {
+export class ScheduledTasksService implements OnModuleInit {
   private readonly logger = new Logger(ScheduledTasksService.name);
-  private tasksRunning = false;
 
   constructor(
     private readonly emailService: EmailService,
+    private readonly settingsService: SettingsService,
     private readonly schedulerRegistry: SchedulerRegistry,
     @InjectModel(Booking.name) private bookingModel: Model<Booking>,
     @InjectModel(Room.name) private roomModel: Model<Room>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
-  startTasks(): void {
-    if (this.tasksRunning) {
-      this.logger.warn('Scheduled tasks are already running');
-      return;
-    }
-
-    this.tasksRunning = true;
-    this.logger.log('🚀 Starting scheduled notification tasks...');
-    this.logger.log('✅ Scheduled tasks initialized:');
-    this.logger.log('  - Arrival reminders: Every hour');
-    this.logger.log('  - Post-checkout emails: Every hour');
-    this.logger.log('  - Inventory checks: 9 AM & 6 PM daily');
-    this.logger.log('  - Cleanup: Midnight daily');
-  }
-
-  stopTasks(): void {
-    if (!this.tasksRunning) {
-      this.logger.warn('Scheduled tasks are not running');
-      return;
-    }
-
-    this.tasksRunning = false;
-    this.logger.log('🛑 Stopping scheduled tasks...');
-    this.logger.log('✅ All scheduled tasks stopped');
+  /**
+   * There used to be a `tasksRunning` boolean, set by a `startTasks()` call
+   * from main.ts, which every @Cron handler then checked as its first line.
+   * That reimplemented what @nestjs/schedule already does — and it failed
+   * silently: if the call in main.ts was reordered, or a test booted the module
+   * directly, all five cron jobs returned immediately with no error and no log,
+   * so nothing happened and nothing said so.
+   *
+   * SchedulerRegistry is the framework's own switch. Jobs run because they are
+   * registered; stopping them is app.close(), which Nest calls on shutdown.
+   */
+  onModuleInit(): void {
+    const jobs = Array.from(this.schedulerRegistry.getCronJobs().keys());
+    this.logger.log(`Scheduled tasks registered: ${jobs.length ? jobs.join(', ') : 'none'}`);
   }
 
   @Cron(CronExpression.EVERY_HOUR)
   async handleArrivalReminders(): Promise<void> {
-    if (!this.tasksRunning) return;
-    
-    this.logger.log('⏰ Running hourly reminder check...');
     await this.checkArrivalReminders();
   }
 
   @Cron(CronExpression.EVERY_HOUR)
   async handlePostCheckoutEmails(): Promise<void> {
-    if (!this.tasksRunning) return;
-    this.logger.log('📧 Running post-checkout email check...');
+    if (!(await this.settingsService.isEmailEnabled('reminderNotifications'))) {
+      this.logger.log('Post-checkout emails are switched off in settings');
+      return;
+    }
 
     // Find bookings checked out 20-28 hours ago, email not sent yet
     const now = new Date();
@@ -70,7 +67,9 @@ export class ScheduledTasksService {
     // should stop it.
     const bookings = await this.bookingModel
       .find({
-        bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN', 'CHECKED_OUT'] },
+        bookingStatus: {
+          $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.CHECKED_IN, BOOKING_STATUS.CHECKED_OUT],
+        },
         postCheckoutEmailSent: { $ne: true },
         checkOut: { $gte: from, $lte: to },
         // A walk-in written down without an address has nobody to thank.
@@ -82,60 +81,107 @@ export class ScheduledTasksService {
     this.logger.log(`Found ${bookings.length} bookings for post-checkout email`);
 
     for (const booking of bookings) {
+      const bookingId = (booking as any)._id as Types.ObjectId;
+
+      // Claim before sending, not after. See claimEmail().
+      const claim = await this.claimEmail(bookingId, 'postCheckoutEmailSent');
+      if (!claim) continue;
+
       try {
-        await this.emailService.sendCheckoutThankYou({
+        const result = await this.emailService.sendCheckoutThankYou({
           guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
           guestEmail: booking.guestInfo.email,
           roomName: (booking as any).roomId?.name ?? '',
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
-          language: booking.guestInfo.language ?? 'el',
+          language: booking.guestInfo.language ?? GUEST_LANGUAGE.EL,
         });
-        await this.bookingModel.findByIdAndUpdate(booking._id, { postCheckoutEmailSent: true });
-        this.logger.log(`✅ Post-checkout email sent to ${booking.guestInfo.email}`);
+
+        // EmailService returns failures as values rather than throwing, so this
+        // `await` resolves on failure too. The flag used to be set
+        // unconditionally right here, which marked the review request as sent
+        // when nothing had been sent and the guest was never asked again.
+        if (result?.success && !result.simulated) {
+          await this.completeEmailClaim(bookingId, 'postCheckoutEmailSent', claim);
+          this.logger.log(`Post-checkout email sent to ${booking.guestInfo.email}`);
+        } else {
+          await this.releaseEmailClaim(bookingId, 'postCheckoutEmailSent', claim);
+          this.logger.warn(
+            `Post-checkout email failed for ${bookingId}, will retry: ${result?.error ?? 'unknown error'}`,
+          );
+        }
       } catch (err) {
-        this.logger.error(`Failed post-checkout email for ${booking._id}:`, err);
+        await this.releaseEmailClaim(bookingId, 'postCheckoutEmailSent', claim);
+        this.logger.error(
+          `Failed post-checkout email for ${bookingId}: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
   }
 
+  /** Expiring, token-owned claims survive crashes without marking unsent mail sent.
+   * SMTP is at-least-once: a crash after delivery but before acknowledgement may
+   * retry a message. Exactly-once delivery requires provider idempotency.
+   */
+  private async claimEmail(bookingId: Types.ObjectId, flag: EmailClaimFlag): Promise<string | null> {
+    const token = randomUUID();
+    const key = 'emailClaims.' + flag;
+    const result = await this.bookingModel.updateOne(
+      { _id: bookingId, [flag]: { $ne: true }, $or: [
+        { [key + '.at']: { $exists: false } },
+        { [key + '.at']: { $lt: new Date(Date.now() - 10 * 60_000) } },
+      ] },
+      { $set: { [key]: { token, at: new Date() } } },
+    );
+    return result.modifiedCount === 1 ? token : null;
+  }
+
+  private async completeEmailClaim(bookingId: Types.ObjectId, flag: EmailClaimFlag, token: string): Promise<void> {
+    const key = 'emailClaims.' + flag;
+    await this.bookingModel.updateOne(
+      { _id: bookingId, [key + '.token']: token },
+      { $set: { [flag]: true }, $unset: { [key]: 1 } },
+    );
+  }
+
+  private async releaseEmailClaim(bookingId: Types.ObjectId, flag: EmailClaimFlag, token: string): Promise<void> {
+    const key = 'emailClaims.' + flag;
+    await this.bookingModel.updateOne(
+      { _id: bookingId, [key + '.token']: token },
+      { $unset: { [key]: 1 } },
+    );
+  }
+
   @Cron('0 9,18 * * *') // 9 AM and 6 PM daily
   async handleInventoryChecks(): Promise<void> {
-    if (!this.tasksRunning) return;
-    
-    this.logger.log('⏰ Running inventory check...');
     await this.checkUpcomingInventory();
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleDailyCleanup(): Promise<void> {
-    if (!this.tasksRunning) return;
+    this.logger.log('Running daily cleanup tasks');
 
-    this.logger.log('🧹 Running daily cleanup tasks...');
-    
     try {
       await this.cleanupNotificationFlags();
-      this.logger.log('✅ Daily cleanup completed');
+      this.logger.log('Daily cleanup completed');
     } catch (error) {
-      this.logger.error('❌ Daily cleanup failed:', error);
+      this.logger.error(`Daily cleanup failed: ${error instanceof Error ? error.message : error}`);
     }
   }
 
   @Cron(CronExpression.EVERY_30_MINUTES)
   async handleSystemHealthCheck(): Promise<void> {
-    if (!this.tasksRunning) return;
-
     try {
       // Check system health
       const memUsage = process.memoryUsage();
       const heapUsedMB = memUsage.heapUsed / 1024 / 1024;
       
       if (heapUsedMB > 500) {
-        this.logger.warn(`⚠️ High memory usage: ${heapUsedMB.toFixed(2)}MB`);
+        this.logger.warn(`High memory usage: ${heapUsedMB.toFixed(2)}MB`);
       }
 
       // Log system status
-      this.logger.debug(`🔍 System health - Memory: ${heapUsedMB.toFixed(2)}MB`);
+      this.logger.debug(`System health - memory: ${heapUsedMB.toFixed(2)}MB`);
     } catch (error) {
       this.logger.error('❌ System health check failed:', error);
     }
@@ -150,18 +196,29 @@ export class ScheduledTasksService {
 
   private async checkArrivalReminders(): Promise<void> {
     try {
-      this.logger.log('🔔 Checking for arrival reminders...');
+      const settings = await this.settingsService.getEffectiveSettings();
+      if (!(await this.settingsService.isEmailEnabled('reminderNotifications'))) {
+        this.logger.log('Arrival reminders are switched off in settings');
+        return;
+      }
 
-      const now = new Date();
-      const reminderTime = new Date(now.getTime() + (24 * 60 * 60 * 1000)); // 24 hours from now
+      // `reminderHours` from settings, instead of a hardcoded 24. The owner
+      // could set this in the admin panel and nothing read it.
+      const reminderHours = settings.reminderHours;
 
-      // Find bookings that need reminders
+      // Day window at the property. This used to be
+      // `new Date(reminderTime.toDateString())`, which parses a localised
+      // string like "Sat Jul 04 2026" in local time, while checkIn is stored at
+      // UTC midnight — so the window was offset by the container's zone and
+      // silently depended on TZ being unset.
+      const targetDay = dayStart(
+        addDays(todayAtProperty(), Math.max(1, Math.round(reminderHours / 24))),
+      );
+      const dayAfter = new Date(targetDay.getTime() + 24 * 60 * 60 * 1000);
+
       const bookings = await this.bookingModel.find({
-        checkIn: {
-          $gte: new Date(reminderTime.toDateString()),
-          $lt: new Date(new Date(reminderTime.toDateString()).getTime() + 24 * 60 * 60 * 1000)
-        },
-        bookingStatus: 'CONFIRMED',
+        checkIn: { $gte: targetDay, $lt: dayAfter },
+        bookingStatus: BOOKING_STATUS.CONFIRMED,
         reminderSent: { $ne: true },
         // Same as the post-checkout mail: no address, no reminder.
         'guestInfo.email': { $nin: [null, ''] },
@@ -174,7 +231,6 @@ export class ScheduledTasksService {
       const rooms = await this.roomModel.find({ _id: { $in: roomIds } }).lean();
       const roomMap = new Map(rooms.map(r => [r._id.toString(), r]));
 
-      const sentIds: any[] = [];
       const BATCH_SIZE = 5;
 
       for (let i = 0; i < bookings.length; i += BATCH_SIZE) {
@@ -182,29 +238,49 @@ export class ScheduledTasksService {
         const results = await Promise.allSettled(
           batch.map(async (booking) => {
             const room = roomMap.get(booking.roomId?.toString());
-            if (!room) return null;
-            const result = await this.emailService.sendBookingConfirmation({
-              bookingId: booking.bookingNumber,
-              guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
-              guestEmail: booking.guestInfo.email,
-              roomName: room.name,
-              checkIn: booking.checkIn,
-              checkInTime: '15:00',
-              totalPrice: booking.totalAmount,
-              language: booking.guestInfo.language,
-            }, { language: booking.guestInfo.language });
-            if (result?.success) {
-              this.logger.log(`✅ Reminder sent for booking ${booking._id}`);
-              return booking._id;
+            if (!room) return;
+
+            const bookingId = booking._id as Types.ObjectId;
+            // Claimed before sending — the batch read above is shared by every
+            // live container, so without this each of them sends.
+            const claim = await this.claimEmail(bookingId, 'reminderSent');
+            if (!claim) return;
+
+            try {
+              const result = await this.emailService.sendBookingConfirmation({
+                bookingId: booking.bookingNumber,
+                guestName: `${booking.guestInfo.firstName} ${booking.guestInfo.lastName}`,
+                guestEmail: booking.guestInfo.email,
+                roomName: room.name,
+                checkIn: booking.checkIn,
+                // From settings, instead of a hardcoded '15:00' in three files.
+                checkInTime: settings.checkInTime,
+                totalPrice: booking.totalAmount,
+                language: booking.guestInfo.language,
+              }, { language: booking.guestInfo.language });
+
+              if (result?.success && !result.simulated) {
+                await this.completeEmailClaim(bookingId, 'reminderSent', claim);
+                this.logger.log(`Reminder sent for booking ${bookingId}`);
+              } else {
+                await this.releaseEmailClaim(bookingId, 'reminderSent', claim);
+                this.logger.warn(
+                  `Reminder failed for booking ${bookingId}, will retry: ${result?.error ?? 'unknown error'}`,
+                );
+              }
+            } catch (error) {
+              await this.releaseEmailClaim(bookingId, 'reminderSent', claim);
+              throw error;
             }
-            this.logger.log(`❌ Failed to send reminder for booking ${booking._id}`);
-            return null;
           }),
         );
 
         for (const r of results) {
-          if (r.status === 'fulfilled' && r.value) sentIds.push(r.value);
-          else if (r.status === 'rejected') this.logger.error('Error sending reminder:', r.reason);
+          if (r.status === 'rejected') {
+            this.logger.error(
+              `Error sending reminder: ${r.reason instanceof Error ? r.reason.message : r.reason}`,
+            );
+          }
         }
 
         // Delay between batches only, not between every single email
@@ -212,23 +288,16 @@ export class ScheduledTasksService {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
-
-      if (sentIds.length > 0) {
-        await this.bookingModel.updateMany(
-          { _id: { $in: sentIds } },
-          { $set: { reminderSent: true } },
-        );
-        this.logger.log(`Marked ${sentIds.length} bookings as reminderSent`);
-      }
-
     } catch (error) {
-      this.logger.error('Error checking arrival reminders:', error);
+      this.logger.error(
+        `Error checking arrival reminders: ${error instanceof Error ? error.message : error}`,
+      );
     }
   }
 
   private async checkUpcomingInventory(): Promise<void> {
     try {
-      this.logger.log('📊 Checking upcoming inventory levels...');
+      this.logger.log('Checking upcoming inventory levels');
       
       // Check next 7 days
       for (let i = 0; i < 7; i++) {
@@ -248,7 +317,7 @@ export class ScheduledTasksService {
 
   private async cleanupNotificationFlags(): Promise<void> {
     try {
-      this.logger.log('🧹 Cleaning up old notification flags...');
+      this.logger.log('Cleaning up old notification flags');
 
       const pastDate = new Date();
       pastDate.setDate(pastDate.getDate() - 1);
@@ -284,7 +353,7 @@ export class ScheduledTasksService {
         this.bookingModel.distinct('roomId', {
           checkIn: { $lte: checkDate },
           checkOut: { $gt: checkDate },
-          bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
+          bookingStatus: { $in: [BOOKING_STATUS.CONFIRMED, BOOKING_STATUS.CHECKED_IN] },
         }),
       ]);
 
@@ -306,6 +375,10 @@ export class ScheduledTasksService {
 
   private async sendLowInventoryAlert(_inventoryData: any[], options: any): Promise<void> {
     try {
+      // `lowInventoryAlerts` from settings. The owner could switch this off and
+      // the alerts kept arriving, because nothing read the flag.
+      if (!(await this.settingsService.isEmailEnabled('lowInventoryAlerts'))) return;
+
       const alertData = {
         bookingId: 'INVENTORY_ALERT',
         guestName: 'Admin',
@@ -323,7 +396,7 @@ export class ScheduledTasksService {
 
   // Manual task execution for testing
   async runTaskManually(taskName: string): Promise<void> {
-    this.logger.log(`🔧 Manually running task: ${taskName}`);
+    this.logger.log(`Manually running task: ${taskName}`);
     
     switch (taskName) {
       case 'daily-cleanup':
@@ -349,19 +422,23 @@ export class ScheduledTasksService {
     return Array.from(jobs.keys());
   }
 
-  // Check if tasks are running
+  /**
+   * Whether the scheduler has jobs registered. isRunning() used to report a
+   * hand-maintained boolean, which could say running while the framework
+   * held no jobs, and vice versa.
+   */
   isRunning(): boolean {
-    return this.tasksRunning;
+    return this.schedulerRegistry.getCronJobs().size > 0;
   }
 
   // Manual trigger functions (useful for testing)
   async triggerReminderCheck(): Promise<void> {
-    this.logger.log('🔧 Manual trigger: Checking reminders...');
+    this.logger.log('Manual trigger: checking reminders');
     await this.checkArrivalReminders();
   }
 
   async triggerInventoryCheck(): Promise<void> {
-    this.logger.log('🔧 Manual trigger: Checking inventory...');
+    this.logger.log('Manual trigger: checking inventory');
     await this.checkUpcomingInventory();
   }
 }

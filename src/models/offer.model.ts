@@ -5,7 +5,6 @@ import { Room, RoomDocument } from './room.model';
 
 export type OfferDocument = Offer & Document & {
   isValidForDates(checkIn: Date, checkOut: Date): boolean;
-  calculateDiscountedPrice(originalPrice: number): number;
 };
 
 // Interface for static methods
@@ -115,10 +114,10 @@ OfferSchema.methods.isValidForDates = function(checkIn: Date, checkOut: Date) {
          this.endDate >= checkOutDate;
 };
 
-// Method to calculate discounted price
-OfferSchema.methods.calculateDiscountedPrice = function(originalPrice: number) {
-  return originalPrice * (1 - this.discount / 100);
-};
+// calculateDiscountedPrice() is gone: it had no callers. Discounting a stay is
+// PricingService's job — it applies the offer per night against the seasonal
+// rate and records the amount taken off. A second percentage-off helper here
+// could only ever produce a different number from the one the guest is charged.
 
 // Static method to get active offers
 OfferSchema.statics.getActiveOffers = function() {

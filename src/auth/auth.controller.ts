@@ -1,3 +1,4 @@
+import { Public, Authenticated } from '../auth/decorators/access.decorator';
 import { Controller, Post, Body, UseGuards, Request, Get, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -12,6 +13,7 @@ import { LoginDto } from './dto/login.dto';
 export class AuthController {
   constructor(private authService: AuthService) {}
 
+  @Public()
   @Post('register')
   @Throttle({ default: { limit: 3, ttl: 60000 }, strict: { limit: 10, ttl: 3600000 } })
   @ApiOperation({ summary: 'Register a new user' })
@@ -21,6 +23,7 @@ export class AuthController {
     return this.authService.register(createUserDto);
   }
 
+  @Public()
   @UseGuards(LocalAuthGuard)
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -35,6 +38,7 @@ export class AuthController {
     return this.authService.login(req.user);
   }
 
+  @Authenticated()
   @UseGuards(JwtAuthGuard)
   @Get('profile')
   @ApiOperation({ summary: 'Get user profile' })

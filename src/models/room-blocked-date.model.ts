@@ -1,6 +1,6 @@
+import { bumpRevisionOnWrite } from '../common/persistence/availability-revision';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { bumpRevisionOnWrite } from '../availability/availability-revision';
 
 export type RoomBlockedDateDocument = RoomBlockedDate & Document;
 
@@ -28,9 +28,9 @@ export class RoomBlockedDate {
 }
 
 export const RoomBlockedDateSchema = SchemaFactory.createForClass(RoomBlockedDate);
+bumpRevisionOnWrite(RoomBlockedDateSchema);
 
 // Closing or reopening dates has to reach the guest calendar immediately.
-bumpRevisionOnWrite(RoomBlockedDateSchema);
 
 RoomBlockedDateSchema.index({ roomId: 1, startDate: 1, endDate: 1 });
 RoomBlockedDateSchema.index({ startDate: 1, endDate: 1 });

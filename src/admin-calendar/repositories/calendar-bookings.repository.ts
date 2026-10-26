@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Booking, BookingDocument } from '../../models/booking.model';
 import { occupyingBookingFilter } from '../../availability/availability-rules';
 import { BookingStatus, PaymentMethod, PaymentStatus } from '../calendar.constants';
+import { BookingNumberService } from '../../common/booking-number/booking-number.service';
 
 export interface BookingRow {
   _id: Types.ObjectId;
@@ -75,6 +76,7 @@ const GRID_FIELDS =
 export class CalendarBookingsRepository {
   constructor(
     @InjectModel(Booking.name) private readonly bookingModel: Model<BookingDocument>,
+    private readonly bookingNumbers: BookingNumberService,
   ) {}
 
   /** Every stay holding a night in [start, end), cancellations excluded. */
@@ -133,18 +135,14 @@ export class CalendarBookingsRepository {
   }
 
   /**
-   * The next number in this year's sequence, from the same `counters` document
-   * the guest-facing booking flow uses, so manual and online stays share one run.
+   * The next number in this year's sequence, so manual and online stays share
+   * one run.
+   *
+   * Delegated to BookingNumberService. This was 11 lines duplicated byte for
+   * byte from PaymentsService, both reaching past Mongoose into a raw
+   * `counters` collection that had no model, no schema and no registration.
    */
   async nextBookingNumber(): Promise<string> {
-    const year = new Date().getFullYear();
-    const counter = await this.bookingModel.db
-      .collection<{ _id: string; seq: number }>('counters')
-      .findOneAndUpdate(
-        { _id: `booking:${year}` },
-        { $inc: { seq: 1 } },
-        { upsert: true, returnDocument: 'after' },
-      );
-    return `AST-${year}-${String(counter?.seq ?? 1).padStart(3, '0')}`;
+    return this.bookingNumbers.next();
   }
 }

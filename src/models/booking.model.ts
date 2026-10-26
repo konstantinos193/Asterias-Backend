@@ -1,19 +1,41 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types, Model } from 'mongoose';
 import { ApiProperty } from '@nestjs/swagger';
-import { Room, RoomDocument } from './room.model';
-import { bumpRevisionOnWrite } from '../availability/availability-revision';
+import { addDays, dayStart, todayAtProperty } from '../availability/availability-rules';
+import {
+  BOOKING_SOURCE,
+  BOOKING_SOURCES,
+  BOOKING_STATUS,
+  BOOKING_STATUSES,
+  BookingSource,
+  BookingStatus,
+  GUEST_LANGUAGE,
+  GUEST_LANGUAGES,
+  PAYMENT_METHODS,
+  PAYMENT_STATUS,
+  PAYMENT_STATUSES,
+  PaymentMethod,
+  PaymentStatus,
+} from '../common/enums';
 
 export type BookingDocument = Booking & Document & {
   totalGuests: number;
   nights: number;
 };
 
-// Interface for static methods
+/**
+ * Static methods on the Booking model.
+ *
+ * This interface used to also declare isApartmentAvailable,
+ * getAvailableApartmentCount and isIndividualRoomAvailable — a third copy of
+ * the availability rules, after AvailabilityEngine and the deleted
+ * availabilityCalculator.js. Because they were declared here they were
+ * autocomplete-visible as `this.bookingModel.isApartmentAvailable(...)` from
+ * every module that injects Booking, so any of them could have silently
+ * bypassed the engine. AvailabilityEngine is the only availability authority;
+ * nothing else may answer "is this bookable".
+ */
 export interface BookingModel extends Model<BookingDocument> {
-  isApartmentAvailable(roomTypeId: Types.ObjectId, checkIn: Date, checkOut: Date, roomModel: Model<RoomDocument>, excludeBookingId?: Types.ObjectId): Promise<boolean>;
-  getAvailableApartmentCount(roomTypeId: Types.ObjectId, checkIn: Date, checkOut: Date, roomModel: Model<RoomDocument>): Promise<number>;
-  isIndividualRoomAvailable(roomId: Types.ObjectId, checkIn: Date, checkOut: Date, excludeBookingId?: Types.ObjectId): Promise<boolean>;
   getStats(): Promise<any>;
 }
 
@@ -42,7 +64,7 @@ export class Booking {
       email: { type: String, default: '', trim: true, lowercase: true },
       phone: { type: String, default: '', trim: true },
       specialRequests: { type: String, default: '' },
-      language: { type: String, enum: ['el', 'en', 'de'], default: 'en' }
+      language: { type: String, enum: GUEST_LANGUAGES, default: GUEST_LANGUAGE.EN }
     }
   })
   guestInfo: {
@@ -108,17 +130,17 @@ export class Booking {
   @Prop({ default: null })
   environmentalTax: number;
 
-  @ApiProperty()
-  @Prop({ enum: ['CARD', 'CASH'], required: true })
-  paymentMethod: 'CARD' | 'CASH';
+  @ApiProperty({ enum: PAYMENT_METHODS })
+  @Prop({ enum: PAYMENT_METHODS, required: true })
+  paymentMethod: PaymentMethod;
 
-  @ApiProperty()
-  @Prop({ enum: ['PENDING', 'PAID', 'FAILED', 'REFUNDED'], default: 'PENDING' })
-  paymentStatus: 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
+  @ApiProperty({ enum: PAYMENT_STATUSES })
+  @Prop({ enum: PAYMENT_STATUSES, default: PAYMENT_STATUS.PENDING })
+  paymentStatus: PaymentStatus;
 
-  @ApiProperty()
-  @Prop({ enum: ['CONFIRMED', 'PENDING', 'CANCELLED', 'CHECKED_IN', 'CHECKED_OUT'], default: 'CONFIRMED' })
-  bookingStatus: 'CONFIRMED' | 'PENDING' | 'CANCELLED' | 'CHECKED_IN' | 'CHECKED_OUT';
+  @ApiProperty({ enum: BOOKING_STATUSES })
+  @Prop({ enum: BOOKING_STATUSES, default: BOOKING_STATUS.CONFIRMED })
+  bookingStatus: BookingStatus;
 
   @ApiProperty()
   @Prop({ default: null })
@@ -148,9 +170,9 @@ export class Booking {
   @Prop({ default: null })
   externalId: string;
 
-  @ApiProperty()
-  @Prop({ enum: ['asterias', 'bookingcom', 'airbnb'], default: 'asterias' })
-  source: 'asterias' | 'bookingcom' | 'airbnb';
+  @ApiProperty({ enum: BOOKING_SOURCES })
+  @Prop({ enum: BOOKING_SOURCES, default: BOOKING_SOURCE.ASTERIAS })
+  source: BookingSource;
 
   @ApiProperty()
   @Prop({ default: null })
@@ -247,12 +269,17 @@ export class Booking {
 export const BookingSchema = SchemaFactory.createForClass(Booking);
 
 // Any booking write changes what is for sale, so the cached availability goes.
-bumpRevisionOnWrite(BookingSchema);
 
-// Index for better query performance
+// Indexes. Every one of these is write amplification on a collection written
+// on every booking, cancellation and status change, so a single-field index
+// whose field is already the prefix of a compound index below is not declared:
+// Mongo can serve the single-field query from the compound one.
+//   - {paymentStatus} is covered by {paymentStatus, createdAt}
+//   - {roomId, checkIn, checkOut} is covered by
+//     {roomId, bookingStatus, checkIn, checkOut} only for roomId-only queries,
+//     so it is kept: the date-range predicate needs checkIn in position 2.
 BookingSchema.index({ roomId: 1, checkIn: 1, checkOut: 1 });
 BookingSchema.index({ userId: 1 });
-BookingSchema.index({ paymentStatus: 1 });
 BookingSchema.index({ bookingStatus: 1 });
 BookingSchema.index({ parentBookingId: 1 });
 BookingSchema.index({ childBookingIds: 1 });
@@ -266,7 +293,35 @@ BookingSchema.index({ externalId: 1 }, { sparse: true });
 BookingSchema.index({ checkIn: 1, checkOut: 1, bookingStatus: 1 });
 BookingSchema.index({ source: 1, bookingStatus: 1 });
 BookingSchema.index({ roomId: 1, bookingStatus: 1, checkIn: 1, checkOut: 1 });
-BookingSchema.index({ stripePaymentIntentId: 1 }, { sparse: true });
+
+/**
+ * One booking per Stripe payment, enforced by the database.
+ *
+ * This is the only durable guarantee against double-booking a payment. The
+ * application-level defences are both per-process and therefore both lost the
+ * moment a second container is alive — which is exactly what happens during
+ * every blue/green cutover:
+ *
+ *   - the in-flight Map in PaymentsService serialises concurrent callers, but
+ *     only within one process;
+ *   - the findOne({ stripePaymentIntentId }) check before the insert is a
+ *     read-then-write race, and it runs outside the transaction.
+ *
+ * The return page and the webhook routinely arrive for the same payment inside
+ * the same second. With two processes both missed the read, both passed
+ * assertSellable in separate sessions, and both inserted. Unique here turns
+ * that into an E11000 on the second insert, which the caller reads as
+ * "already booked" — see PaymentsService.isDuplicatePaymentBooking.
+ *
+ * sparse: cash bookings and OTA imports have no payment intent, and a unique
+ * index would otherwise collide on their shared null.
+ */
+// Sparse indexes include explicit nulls (the schema default on cash bookings).
+// Only actual payment ids participate in the uniqueness guarantee.
+BookingSchema.index({ stripePaymentIntentId: 1 }, {
+  unique: true,
+  partialFilterExpression: { stripePaymentIntentId: { $type: 'string' } },
+});
 
 // Virtual for total guests
 BookingSchema.virtual('totalGuests').get(function(this: BookingDocument) {
@@ -281,80 +336,15 @@ BookingSchema.virtual('nights').get(function(this: BookingDocument) {
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 });
 
-// Static methods
-BookingSchema.statics.isApartmentAvailable = async function(
-  roomTypeId: Types.ObjectId,
-  checkIn: Date,
-  checkOut: Date,
-  roomModel: Model<RoomDocument>,
-  excludeBookingId: Types.ObjectId = null,
-) {
-  const roomType = await roomModel.findById(roomTypeId);
-  if (!roomType) throw new Error('Room type not found');
-
-  const query: any = {
-    roomId: roomTypeId,
-    bookingStatus: { $nin: ['CANCELLED'] },
-    checkIn: { $lt: checkOut },
-    checkOut: { $gt: checkIn },
-  };
-
-  if (excludeBookingId) {
-    query._id = { $ne: excludeBookingId };
-  }
-
-  const conflictingBookings = await this.countDocuments(query);
-  return conflictingBookings < (roomType.totalRooms ?? 1);
-};
-
-BookingSchema.statics.getAvailableApartmentCount = async function(
-  roomTypeId: Types.ObjectId,
-  checkIn: Date,
-  checkOut: Date,
-  roomModel: Model<RoomDocument>,
-) {
-  const roomType = await roomModel.findById(roomTypeId);
-  if (!roomType) return 0;
-
-  const allRoomsOfType = await roomModel.find({ nameKey: roomType.nameKey });
-  const totalRoomsOfType = allRoomsOfType.length;
-  if (totalRoomsOfType === 0) return 0;
-
-  const conflictingBookings = await this.countDocuments({
-    roomId: { $in: allRoomsOfType.map((r: any) => r._id) },
-    bookingStatus: { $nin: ['CANCELLED'] },
-    checkIn: { $lt: checkOut },
-    checkOut: { $gt: checkIn },
-  });
-
-  return Math.max(0, totalRoomsOfType - conflictingBookings);
-};
-
-BookingSchema.statics.isIndividualRoomAvailable = async function(
-  roomId: Types.ObjectId,
-  checkIn: Date,
-  checkOut: Date,
-  excludeBookingId: Types.ObjectId = null,
-) {
-  const query: any = {
-    roomId,
-    bookingStatus: { $nin: ['CANCELLED'] },
-    checkIn: { $lt: checkOut },
-    checkOut: { $gt: checkIn },
-  };
-
-  if (excludeBookingId) {
-    query._id = { $ne: excludeBookingId };
-  }
-
-  const conflictingBookings = await this.countDocuments(query);
-  return conflictingBookings === 0;
-};
-
 BookingSchema.statics.getStats = async function() {
-  const today = new Date();
-  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+  // "Today" means today at the property, not today in the container's zone.
+  // This used to build the window from new Date(y, m, d) in local time, which
+  // only agreed with the stored UTC-midnight dates because the container has no
+  // TZ set. Setting TZ=Europe/Athens would have shifted the window by 2-3 hours
+  // and quietly moved bookings in and out of "today's arrivals".
+  const today = todayAtProperty();
+  const startOfDay = dayStart(today);
+  const endOfDay = dayStart(addDays(today, 1));
 
   const [result] = await this.aggregate([
     {

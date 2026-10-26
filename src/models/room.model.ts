@@ -1,12 +1,16 @@
+import { bumpRevisionOnWrite } from '../common/persistence/availability-revision';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { ApiProperty } from '@nestjs/swagger';
-import { bumpRevisionOnWrite } from '../availability/availability-revision';
 
 export type RoomDocument = Room & Document;
 
 @Schema({ timestamps: true })
 export class Room {
+  /** Transaction contention point: concurrent bookings must serialize per room. */
+  @Prop({ default: 0, select: false })
+  inventoryRevision: number;
+
   @ApiProperty()
   @Prop({ required: true, trim: true })
   name: string;
@@ -197,17 +201,17 @@ export class Room {
 }
 
 export const RoomSchema = SchemaFactory.createForClass(Room);
+bumpRevisionOnWrite(RoomSchema);
 
 // The `available` flag and the unit count decide what is for sale, so a room
 // write drops the cached availability too.
-bumpRevisionOnWrite(RoomSchema);
 
 // Index for better query performance
+// {available} and {roomType} alone are not declared: each is the leading field
+// of a compound index below, which Mongo also uses for the single-field query.
 RoomSchema.index({ capacity: 1 });
-RoomSchema.index({ available: 1 });
 RoomSchema.index({ available: 1, capacity: 1 });
 RoomSchema.index({ nameKey: 1 }, { unique: true });
-RoomSchema.index({ roomType: 1 });
 RoomSchema.index({ roomType: 1, available: 1, sortOrder: 1 });
 RoomSchema.index({ sortOrder: 1 });
 RoomSchema.index({ source: 1 });
@@ -218,10 +222,6 @@ RoomSchema.virtual('averageRating').get(function(this: RoomDocument) {
   return this.rating;
 });
 
-// Method to update rating
-RoomSchema.methods.updateRating = function(this: RoomDocument, newRating: number) {
-  const totalRating = (this.rating * this.reviewCount) + newRating;
-  this.reviewCount += 1;
-  this.rating = totalRating / this.reviewCount;
-  return this.save();
-};
+// updateRating() is gone: it had no callers. The rating shown for a room is
+// derived from the Review collection, and a second running average stored on
+// the room would have drifted away from it with no way to tell which was right.

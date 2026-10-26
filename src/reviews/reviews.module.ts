@@ -1,13 +1,12 @@
+import { PersistenceModule } from '../database/persistence.module';
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { ReviewsController } from './reviews.controller';
 import { ReviewsService } from './reviews.service';
-import { Review } from '../models/review.model';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Review.name, schema: require('../models/review.model').ReviewSchema }]),
+    PersistenceModule,
     AuthModule,
   ],
   controllers: [ReviewsController],

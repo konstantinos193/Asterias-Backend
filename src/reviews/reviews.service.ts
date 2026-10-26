@@ -6,6 +6,7 @@ import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { ImportReviewsDto } from './dto/import-reviews.dto';
 import { safeSort } from '../common/sort';
+import { parseListLimit } from '../common/limits';
 
 /** Fields a caller may sort reviews by. Anything else falls back to the default. */
 const SORTABLE_FIELDS = ['reviewDate', 'rating', 'createdAt', 'updatedAt', 'featured'] as const;
@@ -32,7 +33,6 @@ export class ReviewsService {
   }): Promise<{ reviews: Review[]; total: number; pagination: any }> {
     const {
       page = 1,
-      limit = 20,
       source,
       rating,
       visible,
@@ -41,6 +41,8 @@ export class ReviewsService {
       sortOrder = 'desc',
       search
     } = params;
+    // Capped: this was an unbounded .limit(limit) straight from the caller.
+    const limit = parseListLimit(params.limit);
 
     // Build filter
     const filter: any = {};
@@ -230,6 +232,7 @@ export class ReviewsService {
   }
 
   async getRecentReviews(limit = 10): Promise<Review[]> {
+    limit = parseListLimit(limit, { fallback: 10 });
     return this.reviewModel
       .find({ visible: true })
       .sort({ reviewDate: -1 })
@@ -239,6 +242,7 @@ export class ReviewsService {
   }
 
   async getFeaturedReviews(limit = 5): Promise<Review[]> {
+    limit = parseListLimit(limit, { fallback: 5 });
     return this.reviewModel
       .find({ visible: true, featured: true })
       .sort({ reviewDate: -1 })

@@ -1,15 +1,20 @@
-import { 
-  Controller, 
-  Post, 
-  Body, 
+import { Public, Authenticated } from '../auth/decorators/access.decorator';
+import {
+  Controller,
+  Post,
+  Body,
   Headers,
   HttpCode,
   HttpStatus,
+  Req,
+  RawBodyRequest,
   UnauthorizedException,
   Logger
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
+import { Request } from 'express';
 import { BookingComWebhookService } from './bookingcom-webhook.service';
+import { BookingComNotificationDto } from './dto/notification.dto';
 
 @ApiTags('bookingcom-webhook')
 @Controller('bookingcom-webhooks')
@@ -18,6 +23,7 @@ export class BookingComWebhookController {
 
   constructor(private readonly webhookService: BookingComWebhookService) {}
 
+  @Public()
   @Post('notification')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Receive webhook notifications from Booking.com' })
@@ -26,31 +32,29 @@ export class BookingComWebhookController {
   @ApiResponse({ status: 401, description: 'Invalid webhook signature' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   async handleNotification(
-    @Body() notification: any,
-    @Headers('x-bookingcom-signature') signature: string
+    @Req() req: RawBodyRequest<Request>,
+    @Body() notification: BookingComNotificationDto,
+    @Headers('x-bookingcom-signature') signature?: string,
   ) {
+    // The signature is verified against req.rawBody — the exact bytes that were
+    // signed — not against the parsed body. See verifyWebhookSignature.
+    if (!this.webhookService.verifyWebhookSignature(signature, req.rawBody)) {
+      throw new UnauthorizedException('Invalid webhook signature');
+    }
+
     try {
-      // Verify the webhook signature
-      if (!this.webhookService.verifyWebhookSignature(signature, notification)) {
-        throw new UnauthorizedException('Invalid webhook signature');
-      }
-
-      // Process the notification
-      const result = await this.webhookService.processNotification(notification);
-
+      await this.webhookService.processNotification(notification);
       this.logger.log(`Booking.com webhook processed successfully: ${notification.event}`);
-
-      // Always respond with a 200 OK to Booking.com to acknowledge receipt
       return 'Webhook received successfully';
-
     } catch (error) {
-      this.logger.error('Error processing Booking.com webhook:', error);
-      
-      if (error instanceof UnauthorizedException) {
-        throw error;
-      }
-
-      // Still return 200 OK to avoid retries from Booking.com for processing errors
+      // 200 on a processing failure is deliberate: the stay exists at the
+      // channel either way, and a retry storm from Booking.com would not fix
+      // whatever went wrong here. The error is logged for us to act on.
+      this.logger.error(
+        `Error processing Booking.com webhook ${notification?.event}: ` +
+          `${error instanceof Error ? error.message : error}`,
+        error instanceof Error ? error.stack : undefined,
+      );
       return 'Webhook received but processing failed';
     }
   }

@@ -1,3 +1,5 @@
+import { BlockRoomDatesDto, UpdateRoomAvailabilityDto, UpdateRoomPricingDto } from '../admin/dto/admin.dto';
+import { Public, Authenticated } from '../auth/decorators/access.decorator';
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, NotFoundException, BadRequestException, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { RoomsService } from './rooms.service';
@@ -24,6 +26,7 @@ export class RoomsController {
     return this.roomsService.create(createRoomDto);
   }
 
+  @Public()
   @Get()
   @ApiOperation({ summary: 'Get all rooms' })
   @ApiResponse({ status: 200, description: 'Rooms retrieved successfully' })
@@ -31,6 +34,7 @@ export class RoomsController {
     return this.roomsService.findAll();
   }
 
+  @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Get room by ID' })
   @ApiResponse({ status: 200, description: 'Room retrieved successfully' })
@@ -43,6 +47,7 @@ export class RoomsController {
     return room;
   }
 
+  @Public()
   @Get('available/:checkIn/:checkOut')
   @ApiOperation({ summary: 'Get available rooms for date range' })
   @ApiResponse({ status: 200, description: 'Available rooms retrieved successfully' })
@@ -50,6 +55,7 @@ export class RoomsController {
     return this.roomsService.findAvailable(checkIn, checkOut);
   }
 
+  @Public()
   @Get(':id/quote')
   @ApiOperation({ summary: 'Quote a stay for a room (seasonal-aware, per night)' })
   @ApiResponse({ status: 200, description: 'Stay quote computed successfully' })
@@ -138,9 +144,9 @@ export class RoomsController {
   @ApiResponse({ status: 404, description: 'Room not found' })
   updateRoomAvailability(
     @Param('id', MongoObjectIdPipe) id: string,
-    @Body('available') available: boolean
+    @Body() body: UpdateRoomAvailabilityDto
   ) {
-    return this.roomsService.updateRoomAvailability(id, available);
+    return this.roomsService.updateRoomAvailability(id, body.available);
   }
 
   @Get('admin/:id/block')
@@ -158,7 +164,7 @@ export class RoomsController {
   @ApiResponse({ status: 404, description: 'Room not found' })
   blockDates(
     @Param('id', MongoObjectIdPipe) id: string,
-    @Body() body: { startDate: string; endDate: string; reason?: string }
+    @Body() body: BlockRoomDatesDto
   ) {
     return this.roomsService.blockDates(id, new Date(body.startDate), new Date(body.endDate), body.reason);
   }
@@ -182,15 +188,7 @@ export class RoomsController {
   @ApiResponse({ status: 404, description: 'Room not found' })
   updateRoomPricing(
     @Param('id', MongoObjectIdPipe) id: string,
-    @Body() pricingData: {
-      basePrice: number;
-      pricingByOccupancy?: { guests: number; price: number }[];
-      taxes?: {
-        vat?: number;
-        municipalFees?: number;
-        environmentalTax?: number;
-      };
-    }
+    @Body() pricingData: UpdateRoomPricingDto
   ) {
     return this.roomsService.updateRoomPricing(id, pricingData);
   }

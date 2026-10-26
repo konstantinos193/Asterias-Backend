@@ -1,34 +1,17 @@
+import { PersistenceModule } from '../database/persistence.module';
 import { Module } from '@nestjs/common';
 import { SettingsService } from './settings.service';
-import { MongooseModule } from '@nestjs/mongoose';
-import { Schema } from 'mongoose';
 
-const SettingsSchema = new Schema({
-  maintenanceMode: { type: Boolean, default: false },
-  emailNotifications: { type: Boolean, default: true },
-  bookingConfirmations: { type: Boolean, default: true },
-  reminderNotifications: { type: Boolean, default: true },
-  newBookingAlerts: { type: Boolean, default: true },
-  lowInventoryAlerts: { type: Boolean, default: true },
-  reminderHours: { type: Number, default: 24 },
-  checkInTime: { type: String, default: '15:00' },
-  checkOutTime: { type: String, default: '11:00' },
-  minAdvanceBooking: { type: Number, default: 1 },
-  maxAdvanceBooking: { type: Number, default: 365 },
-  cancellationPolicy: { type: Number, default: 48 },
-  overbookingAllowed: { type: Boolean, default: false },
-  currency: { type: String, default: 'EUR' },
-  // Room rates are quoted VAT-inclusive, so no VAT is added on top; the only
-  // extra a guest owes is €2 per night. Keep in sync with PricingService.TAX_DEFAULTS.
-  taxRate: { type: Number, default: 0 },
-  municipalFee: { type: Number, default: 2.00 },
-  environmentalTax: { type: Number, default: 0 },
-  automaticPricing: { type: Boolean, default: false },
-  directBookingDiscount: { type: Number, default: 5 },
-}, { timestamps: true });
-
+/**
+ * The schema used to be declared inline here — the only model in the codebase
+ * not defined in models/. It now lives in models/settings.model.ts with the
+ * interface, the defaults and the writable-key list all derived from the same
+ * declaration.
+ */
 @Module({
-  imports: [MongooseModule.forFeature([{ name: 'Settings', schema: SettingsSchema }])],
+  imports: [
+    PersistenceModule,
+  ],
   providers: [SettingsService],
   exports: [SettingsService],
 })

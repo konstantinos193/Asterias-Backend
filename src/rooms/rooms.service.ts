@@ -6,37 +6,24 @@ import { RoomBlockedDate, RoomBlockedDateDocument } from '../models/room-blocked
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { Booking, BookingDocument } from '../models/booking.model';
-import { ChannelConfig, ChannelConfigDocument } from '../models/channel-config.model';
 import { Offer, OfferDocument } from '../models/offer.model';
 import { AvailabilityEngine } from '../availability/availability-engine';
 import { dayKey } from '../availability/availability-rules';
 
 @Injectable()
 export class RoomsService {
-  private roomsCache: { data: Room[]; timestamp: number } | null = null;
-  private readonly ROOMS_CACHE_TTL_MS = 60_000;
 
   constructor(
     @InjectConnection() private connection: Connection,
     @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
     @InjectModel(RoomBlockedDate.name) private roomBlockedDateModel: Model<RoomBlockedDateDocument>,
-    @InjectModel('Booking') private bookingModel: Model<BookingDocument>,
-    @InjectModel(ChannelConfig.name) private channelConfigModel: Model<ChannelConfigDocument>,
+    @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>,
     @InjectModel(Offer.name) private offerModel: Model<OfferDocument>,
     private readonly availability: AvailabilityEngine,
   ) {}
 
-  /**
-   * Public because admin edits do not go through this service.
-   *
-   * AdminService.updateRoom writes to the Room model directly, so the 60-second
-   * findAll() cache here kept serving the pre-edit list: the owner would save a
-   * room, reload the site, and see no change for up to a minute. AdminService
-   * now calls this after every room write.
-   */
-  clearRoomsCache() {
-    this.roomsCache = null;
-  }
+  /** Compatibility hook; inventory reads are shared through Mongo. */
+  clearRoomsCache() {}
 
   async create(createRoomDto: CreateRoomDto): Promise<Room> {
     const room = new this.roomModel(createRoomDto);
@@ -46,11 +33,7 @@ export class RoomsService {
   }
 
   async findAll(): Promise<Room[]> {
-    if (this.roomsCache && Date.now() - this.roomsCache.timestamp < this.ROOMS_CACHE_TTL_MS) {
-      return this.roomsCache.data;
-    }
     const rooms = await this.roomModel.find().sort({ sortOrder: 1 }).lean().exec() as unknown as Room[];
-    this.roomsCache = { data: rooms, timestamp: Date.now() };
     return rooms;
   }
 
@@ -175,7 +158,6 @@ export class RoomsService {
           await Promise.all([
             this.bookingModel.updateMany({ roomId: oid }, { $set: { roomId: null } }, { session }),
             this.roomBlockedDateModel.deleteMany({ roomId: oid }, { session }),
-            this.channelConfigModel.deleteMany({ roomId: oid }, { session }),
             this.offerModel.updateMany({}, { $pull: { applicableRooms: oid } }, { session }),
           ]);
         }
@@ -205,8 +187,12 @@ export class RoomsService {
     if (pricingData.pricingByOccupancy) {
       room.pricingByOccupancy = pricingData.pricingByOccupancy;
     }
-    
-    return room.save();
+
+    const saved = await room.save();
+    // This write was missing its invalidation, so the public /api/rooms list
+    // kept quoting the previous price for up to the 60s cache lifetime.
+    this.clearRoomsCache();
+    return saved;
   }
   
   async getRoomStats(): Promise<any> {

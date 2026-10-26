@@ -1,8 +1,9 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import { User, UserDocument, UserModel } from '../models/user.model';
+import { USER_ROLE } from '../common/enums';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 
@@ -15,6 +16,8 @@ const DUMMY_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMye1VdLi4hOqXUXQFJ5QvR9nKDUWxRo1Vy
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectModel(User.name) private userModel: UserModel,
     private jwtService: JwtService,
@@ -33,7 +36,8 @@ export class AuthService {
       return null;
     }
 
-    const user = await this.userModel.findByEmail(email);
+    // `password` is select: false, so this is the one read that asks for it.
+    const user = await this.userModel.findForAuthentication(email);
 
     if (!user) {
       await bcrypt.compare(password, DUMMY_HASH);
@@ -47,12 +51,28 @@ export class AuthService {
       return null;
     }
 
-    const { password: _password, resetPasswordToken, resetPasswordExpires, ...result } = user.toObject();
-    return result;
+    // The schema's toObject transform strips the credential fields, so this no
+    // longer has to destructure them out by name.
+    return user.toObject();
   }
 
   async login(user: any) {
     const payload = { email: user.email, sub: String(user._id), role: user.role, username: user.username };
+
+    // Record the login here, where it actually happens.
+    //
+    // This used to be written only by PUT /users/:id/last-login, which the
+    // frontend had to remember to call — so the value in the admin user list
+    // was whatever a client last claimed, and a client that never called it
+    // showed no logins at all. Failure to record it must not fail the login
+    // itself, so the write is awaited but its error is only logged.
+    try {
+      await this.userModel.updateOne({ _id: user._id }, { $set: { lastLogin: new Date() } });
+    } catch (error) {
+      this.logger.warn(
+        `Could not record lastLogin for ${String(user._id)}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
 
     return {
       access_token: this.jwtService.sign(payload),
@@ -84,7 +104,7 @@ export class AuthService {
     // UserModel.createAdmin.
     const user = new this.userModel({
       ...userData,
-      role: 'USER',
+      role: USER_ROLE.USER,
       isActive: true,
     });
 

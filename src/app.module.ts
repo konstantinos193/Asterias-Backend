@@ -1,3 +1,4 @@
+import { DefaultAccessGuard } from './auth/guards/default-access.guard';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
@@ -22,28 +23,30 @@ import { ScheduledTasksModule } from './scheduled-tasks/scheduled-tasks.module';
 import { SettingsModule } from './settings/settings.module';
 import { OffersModule } from './offers/offers.module';
 import { ContactModule } from './contact/contact.module';
-import { KeepAliveModule } from './keep-alive/keep-alive.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { UsersModule } from './users/users.module';
 import { BookingComWebhookModule } from './bookingcom-webhook/bookingcom-webhook.module';
 
 // Common modules
 import { DatabaseModule } from './database/database.module';
+import { StripeModule } from './stripe/stripe.module';
+import { validateEnv } from './config/env.validation';
+import { MaintenanceModeGuard } from './common/guards/maintenance-mode.guard';
 
 // Utils
 import { MemoryMonitorService } from './utils/memory-monitor.service';
-import { KeepAliveService } from './keep-alive/keep-alive.service';
 
 @Module({
   imports: [
-    // Configuration
+    // Configuration.
+    // validate() runs before anything else is constructed, so a missing or
+    // malformed variable fails the boot with one readable message instead of
+    // surfacing as a confusing runtime error on the first request that needs it.
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      validate: validateEnv,
     }),
-
-    // Database
-    DatabaseModule,
 
     // Core modules
     MongooseModule.forRoot(process.env.MONGODB_URI, {
@@ -53,6 +56,14 @@ import { KeepAliveService } from './keep-alive/keep-alive.service';
       serverSelectionTimeoutMS: 30000,
       connectTimeoutMS: 30000,
     }),
+
+    // Logs the connection once it is up. Declared after forRoot so the ordering
+    // reflects the real dependency; it does not configure the connection.
+    DatabaseModule,
+
+    // One Stripe client for the whole app. Global, so consumers inject
+    // STRIPE_CLIENT without importing this module.
+    StripeModule,
     // Named tiers so sensitive routes can ask for a tighter budget with
     // @Throttle({ strict: ... }). Note that registering this module enforced
     // nothing on its own — see the APP_GUARD binding below.
@@ -87,7 +98,6 @@ import { KeepAliveService } from './keep-alive/keep-alive.service';
     SettingsModule,
     OffersModule,
     ContactModule,
-    KeepAliveModule,
     ReviewsModule,
     UsersModule,
     BookingComWebhookModule,
@@ -99,8 +109,14 @@ import { KeepAliveService } from './keep-alive/keep-alive.service';
     // @Throttle on login and register — was decoration, and the login
     // endpoint accepted unlimited password guesses.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: DefaultAccessGuard },
+
+    // Enforces the `maintenanceMode` setting. Bound globally rather than added
+    // per route, because the point of it is to stop every guest-facing write —
+    // a new booking route must be covered without anyone remembering to.
+    { provide: APP_GUARD, useClass: MaintenanceModeGuard },
+
     MemoryMonitorService,
-    KeepAliveService,
   ],
 })
 export class AppModule {}

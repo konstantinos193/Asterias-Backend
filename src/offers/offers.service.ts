@@ -4,45 +4,22 @@ import { Model, Types } from 'mongoose';
 import { Offer, OfferDocument, OfferModel } from '../models/offer.model';
 import { Room } from '../models/room.model';
 import { stayNights } from '../availability/availability-rules';
+import { parseListLimit } from '../common/limits';
 
-export interface CreateOfferDto {
-  title: string;
-  description: string;
-  discount: number;
-  startDate: Date;
-  endDate: Date;
-  applicableRooms?: Types.ObjectId[];
-  minStay?: number;
-  maxStay?: number;
-  conditions?: string;
-  code?: string;
-}
+import {
+  ApplicableOffersDto,
+  CreateOfferDto,
+  UpdateOfferDto,
+  ValidateCodeDto,
+} from './dto/offer.dto';
 
-export interface UpdateOfferDto {
-  title?: string;
-  description?: string;
-  discount?: number;
-  startDate?: Date;
-  endDate?: Date;
-  applicableRooms?: Types.ObjectId[];
-  minStay?: number;
-  maxStay?: number;
-  conditions?: string;
-  active?: boolean;
-}
-
-export interface ApplicableOffersDto {
-  checkIn: Date;
-  checkOut: Date;
-  roomId?: Types.ObjectId;
-}
-
-export interface ValidateCodeDto {
-  code: string;
-  checkIn: Date;
-  checkOut: Date;
-  roomId?: Types.ObjectId;
-}
+/**
+ * These were declared here as `interface`s and used as the `@Body()` type on
+ * four routes, which validated nothing — an interface leaves no metatype for
+ * ValidationPipe to read. They are now real classes in dto/offer.dto.ts, and
+ * re-exported here so existing imports keep working.
+ */
+export { CreateOfferDto, UpdateOfferDto, ApplicableOffersDto, ValidateCodeDto };
 
 @Injectable()
 export class OffersService {
@@ -114,10 +91,12 @@ export class OffersService {
     }
   }
 
-  async getAllOffers(page = 1, limit = 20, active?: boolean): Promise<{ offers: OfferDocument[]; pagination: any }> {
+  async getAllOffers(page = 1, rawLimit = 20, active?: boolean): Promise<{ offers: OfferDocument[]; pagination: any }> {
     const filter: any = {};
     if (active !== undefined) filter.active = active === true;
 
+    // Capped: this was an unbounded .limit(limit) straight from the caller.
+    const limit = parseListLimit(rawLimit);
     const skip = (page - 1) * limit;
 
     const offers = await this.offerModel.find(filter)
@@ -161,7 +140,7 @@ export class OffersService {
     // Filter offers that are applicable for the given dates and room
     const applicableOffers = allOffers.filter(offer => {
       // Check if offer is valid for the dates
-      if (!offer.isValidForDates(checkIn, checkOut)) {
+      if (!offer.isValidForDates(new Date(checkIn), new Date(checkOut))) {
         return false;
       }
 
@@ -205,7 +184,7 @@ export class OffersService {
     }
 
     // Check if offer is valid for the dates
-    const isValidForDates = offer.isValidForDates(checkIn, checkOut);
+    const isValidForDates = offer.isValidForDates(new Date(checkIn), new Date(checkOut));
     if (!isValidForDates) {
       throw new BadRequestException('Offer is not valid for the selected dates');
     }

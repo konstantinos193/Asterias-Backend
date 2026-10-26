@@ -5,6 +5,7 @@ import { Contact, ContactDocument, ContactModel } from '../models/contact.model'
 import { User, UserDocument } from '../models/user.model';
 import { EmailService } from '../email/email.service';
 import { safeSort } from '../common/sort';
+import { parseListLimit } from '../common/limits';
 
 /** Fields a caller may sort contact messages by. */
 const SORTABLE_FIELDS = ['createdAt', 'updatedAt', 'status', 'priority'] as const;
@@ -65,10 +66,11 @@ export class ContactService {
       priority,
       assignedTo,
       page = 1,
-      limit = 20,
       sortBy = 'createdAt',
       sortOrder = 'desc'
     } = filters;
+    // Capped: this was an unbounded .limit(limit) straight from the caller.
+    const limit = parseListLimit(filters.limit);
 
     // Build filter
     const filter: any = {};

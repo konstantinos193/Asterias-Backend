@@ -1,27 +1,24 @@
+import { SettingsModule } from '../settings/settings.module';
+import { PersistenceModule } from '../database/persistence.module';
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { BookingsController } from './bookings.controller';
 import { BookingsService } from './bookings.service';
 import { RoomCombinationService } from './room-combination.service';
-import { Booking, BookingSchema } from '../models/booking.model';
-import { BookingHistory, BookingHistorySchema } from '../models/booking-history.model';
-import { Room, RoomSchema } from '../models/room.model';
 import { EmailModule } from '../email/email.module';
 import { AuthModule } from '../auth/auth.module';
 import { AvailabilityEngineModule } from '../availability/availability-engine.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { BookingNumberModule } from '../common/booking-number/booking-number.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: Booking.name, schema: BookingSchema },
-      { name: BookingHistory.name, schema: BookingHistorySchema },
-      { name: Room.name, schema: RoomSchema },
-    ]),
+    PersistenceModule,
     EmailModule,
+    SettingsModule,
     AuthModule,
     AvailabilityEngineModule,
     PricingModule,
+    BookingNumberModule,
   ],
   controllers: [BookingsController],
   providers: [BookingsService, RoomCombinationService],

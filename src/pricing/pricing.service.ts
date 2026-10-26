@@ -5,7 +5,9 @@ import { Room, RoomDocument } from '../models/room.model';
 import { SeasonalPricing, SeasonalPricingDocument } from '../models/seasonal-pricing.model';
 import { Offer, OfferDocument } from '../models/offer.model';
 import { SettingsService } from '../settings/settings.service';
+import { SETTINGS_DEFAULTS } from '../models/settings.model';
 import { stayNights } from '../availability/availability-rules';
+import { CURRENCY, Currency } from '../common/enums';
 
 export type RoomType = '2beds' | '3beds' | '4beds';
 
@@ -20,7 +22,7 @@ export interface StayQuote {
   nights: number;
   perNight: PerNight[];
   subtotal: number; // PRE-TAX sum of nightly room prices
-  currency: 'eur';
+  currency: Currency;
   roomType?: RoomType; // what the room document declares
   rateTier?: RoomType; // the seasonal rate this stay was actually priced at
   basePrice: number;
@@ -28,7 +30,16 @@ export interface StayQuote {
 
 export interface RateNight {
   date: string; // YYYY-MM-DD
-  rates: Record<RoomType, { price: number; periodId: string; periodName: string } | null>;
+  rates: Record<
+    RoomType,
+    {
+      price: number;
+      periodId: string;
+      periodName: string;
+      /** 'calendar' when the price was typed on this date, 'manual' for a season. */
+      origin: 'manual' | 'calendar';
+    } | null
+  >;
 }
 
 export interface RateCalendar {
@@ -40,18 +51,23 @@ export interface RateCalendar {
 
 /**
  * Fallbacks used only when a rate is missing from the settings document.
- * These MUST stay in sync with the defaults in settings.module.ts — a mismatch
- * silently charges guests a different amount than the admin panel shows.
  *
- * Room rates here are quoted VAT-inclusive (the owner's price list is what the
- * guest pays), so `taxRate` is 0: adding VAT on top would overcharge. The only
- * extra a guest owes is the €2 per-night stay fee, which lives in
- * `municipalFee`; there is no separate per-guest charge.
+ * Taken from the settings field declarations rather than written out again, so
+ * there is no second copy to keep in sync. There used to be: these three
+ * numbers were duplicated here and in the inline schema in settings.module.ts,
+ * joined by a "keep in sync" comment in both directions — and a mismatch
+ * silently charges guests a different amount from the one the admin panel
+ * shows.
+ *
+ * Room rates are quoted VAT-inclusive (the owner's price list is what the guest
+ * pays), so `taxRate` is 0: adding VAT on top would overcharge. The only extra
+ * a guest owes is the per-night stay fee in `municipalFee`; there is no
+ * separate per-guest charge.
  */
 export const TAX_DEFAULTS = {
-  taxRate: 0, // % — rates are VAT-inclusive
-  municipalFee: 2.0, // € per night
-  environmentalTax: 0, // € per guest per night
+  taxRate: SETTINGS_DEFAULTS.taxRate,
+  municipalFee: SETTINGS_DEFAULTS.municipalFee,
+  environmentalTax: SETTINGS_DEFAULTS.environmentalTax,
 } as const;
 
 /** Seasonal rate tiers, cheapest first. */
@@ -193,7 +209,12 @@ export class PricingService {
       for (const tier of RATE_TIERS) {
         const p = this.winningPeriod(periods, night, tier);
         rates[tier] = p
-          ? { price: this.seasonalPrice(p, tier)!, periodId: String(p._id), periodName: p.name }
+          ? {
+              price: this.seasonalPrice(p, tier)!,
+              periodId: String(p._id),
+              periodName: p.name,
+              origin: p.origin === 'calendar' ? 'calendar' : 'manual',
+            }
           : null;
       }
       nights.push({ date: night.toISOString().slice(0, 10), rates });
@@ -326,7 +347,7 @@ export class PricingService {
       nights,
       perNight,
       subtotal: Math.round(subtotal * 100) / 100,
-      currency: 'eur',
+      currency: CURRENCY,
       roomType: room.roomType,
       rateTier,
       basePrice: room.price,

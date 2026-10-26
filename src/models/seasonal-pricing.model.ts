@@ -1,3 +1,4 @@
+import { bumpRevisionOnWrite } from '../common/persistence/availability-revision';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { ApiProperty } from '@nestjs/swagger';
@@ -61,6 +62,7 @@ export class SeasonalPricing {
 }
 
 export const SeasonalPricingSchema = SchemaFactory.createForClass(SeasonalPricing);
+bumpRevisionOnWrite(SeasonalPricingSchema);
 
 SeasonalPricingSchema.index({ startDate: 1, endDate: 1 });
 SeasonalPricingSchema.index({ active: 1, startDate: 1, endDate: 1 });

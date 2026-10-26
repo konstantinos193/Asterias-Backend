@@ -1,13 +1,12 @@
+import { PersistenceModule } from '../database/persistence.module';
 import { Module } from '@nestjs/common';
 import { OffersService } from './offers.service';
 import { OffersController } from './offers.controller';
-import { MongooseModule } from '@nestjs/mongoose';
-import { Offer, OfferSchema } from '../models/offer.model';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Offer.name, schema: OfferSchema }]),
+    PersistenceModule,
     AuthModule
   ],
   controllers: [OffersController],

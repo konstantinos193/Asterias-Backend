@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -10,9 +10,9 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { MongoSanitizePipe } from './common/pipes/mongo-sanitize.pipe';
 import { EmailService } from './email/email.service';
-import { ScheduledTasksService } from './scheduled-tasks/scheduled-tasks.service';
 import { MemoryMonitorService } from './utils/memory-monitor.service';
-import { KeepAliveService } from './keep-alive/keep-alive.service';
+
+const logger = new Logger('Bootstrap');
 
 async function bootstrap() {
   // rawBody: the Stripe webhook signature is computed over the exact bytes sent.
@@ -32,9 +32,15 @@ async function bootstrap() {
   // Only the path is logged: query strings carry Stripe session ids, reset
   // tokens and guest email addresses, and these logs are not a safe place for
   // them.
+  //
+  // Health checks are skipped: the uptime monitor hits /health continuously and
+  // one line per probe buried the lines that matter in `docker logs`.
+  const requestLogger = new Logger('Request');
   app.use((req, res, next) => {
     const path = req.url.split('?')[0];
-    console.log(`🔍 ${req.method} ${path} - Origin: ${req.headers.origin || 'No origin'}`);
+    if (path !== '/health' && !path.startsWith('/health/')) {
+      requestLogger.log(`${req.method} ${path} - Origin: ${req.headers.origin || 'none'}`);
+    }
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     next();
   });
@@ -105,66 +111,55 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, document);
   }
 
-  // Initialize services
+  // Initialize services.
+  // The email transporter is built here rather than in the module so a bad SMTP
+  // config fails the boot instead of being discovered on the first booking.
   const emailService = app.get(EmailService);
-  const scheduledTasksService = app.get(ScheduledTasksService);
   const memoryMonitorService = app.get(MemoryMonitorService, { strict: false });
-  const keepAliveService = app.get(KeepAliveService, { strict: false });
 
-  // Initialize email service
   emailService.initializeTransporter();
-  console.log('📧 Email service initialized');
+  await emailService.verifyTransporter();
 
-  // Start memory monitoring if enabled
+  // Memory monitoring is a development diagnostic: it samples RSS and reports
+  // suspected leaks, and nothing downstream acts on its findings.
   if (process.env.NODE_ENABLE_MEMORY_MONITOR === 'true' || process.env.NODE_ENV === 'development') {
     const thresholdMB = parseInt(process.env.MEMORY_WARNING_THRESHOLD) || 500;
     const checkIntervalMs = parseInt(process.env.MEMORY_CHECK_INTERVAL) || 60000;
     memoryMonitorService?.start(thresholdMB, checkIntervalMs);
   }
 
-  // Start scheduled tasks
-  scheduledTasksService.startTasks();
+  // Scheduled tasks start themselves from OnModuleInit — see
+  // ScheduledTasksService. They used to need a startTasks() call from here, and
+  // reordering this function silently disabled all five cron jobs.
 
-  // Start keep-alive service in production
-  if (process.env.NODE_ENV === 'production') {
-    keepAliveService?.startKeepAlive();
-    console.log('💓 Keep-alive service started');
-  }
-  
   const port = process.env.PORT || 5000;
   await app.listen(port, '0.0.0.0');
 
-  console.log(`🚀 Server running on port ${port}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`📊 Health check: http://0.0.0.0:${port}/health`);
+  logger.log(`Server running on port ${port}`);
+  logger.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.log(`Health check: http://0.0.0.0:${port}/health`);
   if (process.env.NODE_ENV !== 'production') {
-    console.log(`📚 API Documentation: http://0.0.0.0:${port}/api/docs`);
+    logger.log(`API documentation: http://0.0.0.0:${port}/api/docs`);
   }
 
   // Graceful shutdown handling
-  setupGracefulShutdown(app, scheduledTasksService, memoryMonitorService, keepAliveService);
+  setupGracefulShutdown(app, memoryMonitorService);
 }
 
-function setupGracefulShutdown(app: any, scheduledTasksService: ScheduledTasksService, memoryMonitorService?: MemoryMonitorService, keepAliveService?: KeepAliveService) {
+function setupGracefulShutdown(app: any, memoryMonitorService?: MemoryMonitorService) {
   const gracefulShutdown = async (signal: string) => {
-    console.log(`${signal} received, shutting down gracefully`);
+    logger.log(`${signal} received, shutting down gracefully`);
     try {
-      // Stop memory monitoring
       memoryMonitorService?.stop();
-      
-      // Stop scheduled tasks
-      scheduledTasksService.stopTasks();
-      
-      // Stop keep-alive service
-      keepAliveService?.stopKeepAlive();
-      
-      // Close app
+
+      // app.close() runs every OnModuleDestroy, which is what stops the cron
+      // jobs and closes the Mongo connection and the Puppeteer browser.
       await app.close();
-      
-      console.log('✅ Graceful shutdown completed');
+
+      logger.log('Graceful shutdown completed');
       process.exit(0);
     } catch (error) {
-      console.error('Error during shutdown:', error);
+      logger.error('Error during shutdown', error instanceof Error ? error.stack : error);
       process.exit(1);
     }
   };
@@ -173,12 +168,12 @@ function setupGracefulShutdown(app: any, scheduledTasksService: ScheduledTasksSe
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
   // Handle uncaught errors
-  process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled rejection', reason instanceof Error ? reason.stack : String(reason));
   });
 
   process.on('uncaughtException', (error) => {
-    console.error('Uncaught Exception:', error);
+    logger.error('Uncaught exception', error.stack);
     gracefulShutdown('uncaughtException');
   });
 }

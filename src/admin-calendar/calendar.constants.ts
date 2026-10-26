@@ -1,20 +1,24 @@
-export const BOOKING_STATUSES = [
-  'PENDING',
-  'CONFIRMED',
-  'CHECKED_IN',
-  'CHECKED_OUT',
-  'CANCELLED',
-] as const;
-export type BookingStatus = (typeof BOOKING_STATUSES)[number];
-
-export const PAYMENT_STATUSES = ['PENDING', 'PAID', 'FAILED', 'REFUNDED'] as const;
-export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
-
-export const PAYMENT_METHODS = ['CARD', 'CASH'] as const;
-export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
-
-export const BOOKING_SOURCES = ['asterias', 'bookingcom', 'airbnb'] as const;
-export type BookingSource = (typeof BOOKING_SOURCES)[number];
+/**
+ * Status sets now live in common/enums.ts, which is the one source for the
+ * whole codebase. They are re-exported here so the existing admin-calendar
+ * imports keep working and there is still only one definition.
+ */
+export {
+  BOOKING_STATUS,
+  BOOKING_STATUSES,
+  PAYMENT_STATUS,
+  PAYMENT_STATUSES,
+  PAYMENT_METHOD,
+  PAYMENT_METHODS,
+  BOOKING_SOURCE,
+  BOOKING_SOURCES,
+} from '../common/enums';
+export type {
+  BookingStatus,
+  PaymentStatus,
+  PaymentMethod,
+  BookingSource,
+} from '../common/enums';
 
 /** Why a stay cannot sit on these nights. The UI maps each code to its wording. */
 export const CONFLICT_CODES = {

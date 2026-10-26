@@ -1,3 +1,4 @@
+import { Public, Authenticated } from '../auth/decorators/access.decorator';
 import { 
   Controller, 
   Get, 
@@ -26,6 +27,7 @@ export class ContactController {
 
   // Unauthenticated and it sends mail from the property's address, so it is
   // both a spam relay and a way to run up the SMTP bill.
+  @Public()
   @Post()
   @Throttle({ default: { limit: 3, ttl: 60000 }, strict: { limit: 10, ttl: 900000 } })
   @ApiOperation({ summary: 'Submit contact form (public)' })

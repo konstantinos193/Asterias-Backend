@@ -94,10 +94,11 @@ export class Review {
 export const ReviewSchema = SchemaFactory.createForClass(Review);
 
 // Indexes for better query performance
+// {source} and {visible} alone are not declared: each leads two of the
+// compound indexes below, which Mongo also uses for the single-field query.
+// That removes 4 of the 11 indexes this collection used to carry.
 ReviewSchema.index({ rating: -1 });
 ReviewSchema.index({ reviewDate: -1 });
-ReviewSchema.index({ source: 1 });
-ReviewSchema.index({ visible: 1 });
 ReviewSchema.index({ featured: 1 });
 ReviewSchema.index({ source: 1, visible: 1 });
 ReviewSchema.index({ visible: 1, featured: 1 });

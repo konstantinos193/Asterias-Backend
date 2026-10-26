@@ -43,6 +43,19 @@ export class HttpExceptionFilter implements ExceptionFilter {
       // MongoDB duplicate key — don't expose which field
       status = HttpStatus.CONFLICT;
       message = 'A record with the provided data already exists';
+    } else if (typeof (exception as any)?.type === 'string' && (exception as any).type.startsWith('Stripe')) {
+      // A refusal from Stripe, not a fault of ours: "amount too large", "charge
+      // already refunded", "this charge is disputed". The message is the one
+      // thing the owner can act on, so it is passed through rather than
+      // flattened to "Internal server error".
+      //
+      // This lived in a `paymentError()` helper that each payment handler in
+      // AdminController had to remember to call from its own catch block. Doing
+      // it here covers every route that touches Stripe, including the ones
+      // written after the helper.
+      status = HttpStatus.BAD_GATEWAY;
+      message = `Stripe: ${(exception as any).message}`;
+      this.logger.warn(`Stripe refused ${request.method} ${request.url}: ${message}`);
     } else {
       status = HttpStatus.INTERNAL_SERVER_ERROR;
       message = 'Internal server error';

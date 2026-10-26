@@ -1,7 +1,8 @@
-import { Controller, Get, Res, UseGuards } from '@nestjs/common';
+import { Public, Authenticated } from '../auth/decorators/access.decorator';
+import { Controller, Get, Inject, Res, UseGuards } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
-import Stripe from 'stripe';
+import { STRIPE_CLIENT, StripeClient } from '../stripe/stripe.module';
 import { Response } from 'express';
 import { join } from 'path';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -11,14 +12,12 @@ const STRIPE_CACHE_TTL_MS = 60_000;
 
 @Controller()
 export class HealthController {
-  private stripe: InstanceType<typeof Stripe>;
   private stripeCache: { result: object; at: number } | null = null;
 
   constructor(
     @InjectConnection() private readonly dbConnection: Connection,
-  ) {
-    this.stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy');
-  }
+    @Inject(STRIPE_CLIENT) private readonly stripe: StripeClient,
+  ) {}
 
   /**
    * Admin only. The public version returned the database host and database
@@ -59,6 +58,9 @@ export class HealthController {
   @Get('health/stripe')
   @UseGuards(JwtAuthGuard, AdminGuard)
   async getStripeHealth() {
+    if (!this.stripe) {
+      return { status: 'ERROR', service: 'Stripe', connected: false, error: 'Stripe is not configured' };
+    }
     if (this.stripeCache && Date.now() - this.stripeCache.at < STRIPE_CACHE_TTL_MS) {
       return this.stripeCache.result;
     }
@@ -92,6 +94,7 @@ export class HealthController {
    * environment, process uptime and a full memory breakdown, which tells an
    * attacker when the process last restarted and how it is responding to load.
    */
+  @Public()
   @Get('health')
   getHealth() {
     return {
@@ -115,6 +118,7 @@ export class HealthController {
     };
   }
 
+  @Public()
   @Get()
   getRoot(@Res() res: Response) {
     res.sendFile(join(process.cwd(), 'public', 'index.html'));

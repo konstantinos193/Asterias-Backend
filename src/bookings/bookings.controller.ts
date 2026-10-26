@@ -1,9 +1,9 @@
+import { Public, Authenticated } from '../auth/decorators/access.decorator';
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, NotFoundException, BadRequestException, Query, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { BookingsService } from './bookings.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
-import { ApiKeyAuthGuard } from '../auth/guards/api-key-auth.guard';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 import { SendEmailDto } from './dto/send-email.dto';
@@ -51,6 +51,7 @@ export class BookingsController {
     });
   }
 
+  @Public()
   @Get('availability')
   @ApiOperation({ summary: 'Check room availability' })
   @ApiResponse({ status: 200, description: 'Availability checked successfully' })
@@ -69,6 +70,7 @@ export class BookingsController {
     return this.bookingsService.getStats();
   }
 
+  @Authenticated()
   @Get('my-bookings')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get bookings for the current user' })
@@ -97,6 +99,7 @@ export class BookingsController {
    * guest flow is /my-bookings, which is behind the login already; a cancel link
    * for guests who are not signed in needs a signed token, not an open route.
    */
+  @Authenticated()
   @Post(':id/cancel')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Cancel a booking' })
@@ -116,6 +119,7 @@ export class BookingsController {
    * booking ids are handed out to guests, so one account was enough to walk
    * the whole table.
    */
+  @Authenticated()
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get booking by ID (owner or admin)' })
@@ -179,6 +183,7 @@ export class BookingsController {
     return this.bookingsService.sendEmail(id, sendEmailDto);
   }
 
+  @Public()
   @Post('room-combinations')
   @ApiOperation({ summary: 'Get optimal room combinations for guests' })
   @ApiResponse({ status: 200, description: 'Room combinations calculated successfully' })
@@ -198,6 +203,7 @@ export class BookingsController {
     return this.bookingsService.createMultiRoomBooking(multiRoomBookingDto);
   }
 
+  @Public()
   @Post('quick-room-search')
   @ApiOperation({ summary: 'Quick room search for backward compatibility' })
   @ApiResponse({ status: 200, description: 'Best room found successfully' })

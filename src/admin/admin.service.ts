@@ -1,4 +1,13 @@
-import { Injectable, HttpException, HttpStatus, NotFoundException, BadRequestException } from '@nestjs/common';
+import { AdminReportingService } from './admin-reporting.service';
+import {
+  Inject,
+  Injectable,
+  HttpException,
+  HttpStatus,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Booking } from '../models/booking.model';
@@ -11,9 +20,23 @@ import { OffersService } from '../offers/offers.service';
 import { SettingsService } from '../settings/settings.service';
 import { RoomsService } from '../rooms/rooms.service';
 import { AvailabilityEngine } from '../availability/availability-engine';
-import { OccupancyResult, addDays, dayKey, summarizeProperty } from '../availability/availability-rules';
+import {
+  OccupancyResult,
+  addDays,
+  dayKey,
+  dayStart,
+  summarizeProperty,
+  todayAtProperty,
+} from '../availability/availability-rules';
 import { PricingService, RateCalendar } from '../pricing/pricing.service';
 import Stripe from 'stripe';
+import { STRIPE_CLIENT, StripeClient } from '../stripe/stripe.module';
+import { BOOKING_STATUS, PAYMENT_STATUS, USER_ROLE } from '../common/enums';
+import { UpdateBookingDto, UpdateRoomPricingDto, UpdateSettingsDto } from './dto/admin.dto';
+import { CreateRoomDto } from '../rooms/dto/create-room.dto';
+import { UpdateRoomDto } from '../rooms/dto/update-room.dto';
+import { SETTINGS_DEFAULTS } from '../models/settings.model';
+import { parseListLimit } from '../common/limits';
 import {
   RefundReason,
   describeCardPayment,
@@ -21,6 +44,19 @@ import {
   refundFields,
 } from '../payments/stripe-refunds';
 import { safeSort } from '../common/sort';
+
+/** Fields a caller may sort the room list by. */
+const ROOM_SORTABLE_FIELDS = [
+  'createdAt',
+  'updatedAt',
+  'name',
+  'nameKey',
+  'price',
+  'capacity',
+  'sortOrder',
+  'available',
+  'roomType',
+] as const;
 
 /** Fields a caller may sort the booking list by. */
 const BOOKING_SORTABLE_FIELDS = [
@@ -36,299 +72,33 @@ const BOOKING_SORTABLE_FIELDS = [
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
   private stripe: InstanceType<typeof Stripe>;
 
   constructor(
-    @InjectModel('Booking') private bookingModel: Model<Booking>,
-    @InjectModel('Room') private roomModel: Model<Room>,
+    @InjectModel(Booking.name) private bookingModel: Model<Booking>,
+    @InjectModel(Room.name) private roomModel: Model<Room>,
     @InjectModel(RoomBlockedDate.name) private roomBlockedDateModel: Model<RoomBlockedDateDocument>,
-    @InjectModel('Contact') private contactModel: Model<Contact>,
-    @InjectModel('User') private userModel: Model<UserDocument>,
+    private readonly reporting: AdminReportingService,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(SeasonalPricing.name) private seasonalModel: Model<SeasonalPricingDocument>,
     private offersService: OffersService,
     private settingsService: SettingsService,
     private roomsService: RoomsService,
     private pricingService: PricingService,
     private readonly availability: AvailabilityEngine,
+    @Inject(STRIPE_CLIENT) stripe: StripeClient,
   ) {
-    this.stripe = process.env.STRIPE_SECRET_KEY 
-      ? new Stripe(process.env.STRIPE_SECRET_KEY)
-      : null;
+    // One shared client — see StripeModule. This was a third independent
+    // Stripe instance with its own configuration and no pinned API version.
+    this.stripe = stripe;
   }
 
-  async getDashboard() {
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-    const startOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate());
-    const endOfYesterday = new Date(startOfYesterday.getTime() + 24 * 60 * 60 * 1000);
-
-    // 5 parallel queries instead of 12: booking stats collapsed into one $facet aggregation
-    const [bookingFacets, totalRoomsCount, recentBookings, todayArrivals, unreadContacts] = await Promise.all([
-      this.bookingModel.aggregate([
-        { $facet: {
-          todayArrivalsCount: [
-            { $match: { checkIn: { $gte: startOfDay, $lt: endOfDay }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
-            { $count: 'n' },
-          ],
-          todayDeparturesCount: [
-            { $match: { checkOut: { $gte: startOfDay, $lt: endOfDay }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN', 'CHECKED_OUT'] } } },
-            { $count: 'n' },
-          ],
-          yesterdayArrivals: [
-            { $match: { checkIn: { $gte: startOfYesterday, $lt: endOfYesterday }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
-            { $count: 'n' },
-          ],
-          // Occupied tonight/last night is NOT counted here: it comes from
-          // AvailabilityEngine below, so the dashboard, the grid and the site
-          // agree on which apartments are taken. This match counted
-          // `checkOut >= today`, so a guest who left this morning still held a
-          // room, and it ignored both PENDING stays and closures.
-          todayGuests: [
-            { $match: { checkIn: { $gte: startOfDay, $lt: endOfDay }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
-            { $group: { _id: null, total: { $sum: { $add: ['$adults', '$children'] } } } },
-          ],
-          yesterdayGuests: [
-            { $match: { checkIn: { $gte: startOfYesterday, $lt: endOfYesterday }, bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] } } },
-            { $group: { _id: null, total: { $sum: { $add: ['$adults', '$children'] } } } },
-          ],
-          monthlyRevenue: [
-            { $match: { createdAt: { $gte: startOfMonth, $lte: endOfMonth }, paymentStatus: 'PAID' } },
-            { $group: { _id: null, total: { $sum: '$totalAmount' } } },
-          ],
-        }},
-      ]).option({ maxTimeMS: 5000 }),
-      this.roomModel.countDocuments({}),
-      this.bookingModel.find()
-        .populate('roomId', 'name')
-        .populate('userId', 'name email')
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .lean(),
-      this.bookingModel.find({
-        checkIn: { $gte: startOfDay, $lt: endOfDay },
-        bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN'] },
-      })
-        .populate('roomId', 'name')
-        .populate('userId', 'name email')
-        .sort({ checkIn: 1 })
-        .limit(10)
-        .lean(),
-      this.contactModel.countDocuments({ status: 'UNREAD' }),
-    ]);
-
-    const f = bookingFacets[0];
-    const todayArrivalsCount     = f.todayArrivalsCount[0]?.n ?? 0;
-    const todayDeparturesCount   = f.todayDeparturesCount[0]?.n ?? 0;
-    const yesterdayArrivals      = f.yesterdayArrivals[0]?.n ?? 0;
-    const todayGuestsCount       = f.todayGuests[0]?.total ?? 0;
-    const yesterdayGuestsCount   = f.yesterdayGuests[0]?.total ?? 0;
-    const monthlyRevenueTotal    = f.monthlyRevenue[0]?.total ?? 0;
-
-    // Free and occupied both come from AvailabilityEngine — the same room ×
-    // night grid the calendar draws and the site sells from. Deriving "free" as
-    // totalRooms - bookings counted a closed or off-sale apartment as
-    // available, so the dashboard said 7 free while the grid under it was grey.
-    const tonight = this.availability.today();
-    const lastNight = addDays(tonight, -1);
-    const occupancy = await this.availability.getOccupancy(lastNight, 2);
-    const nights = summarizeProperty(occupancy);
-    const unitCount = nights[tonight]?.totalRooms ?? totalRoomsCount;
-
-    const bookedOn = (index: number) =>
-      occupancy.rooms.filter(room => room.nights[index]?.status === 'booked').length;
-    const occupiedRooms = bookedOn(1);
-    const yesterdayOccupiedRooms = bookedOn(0);
-
-    const availableRooms = nights[tonight]?.availableRooms ?? Math.max(0, totalRoomsCount - occupiedRooms);
-    const occupancyRate = unitCount > 0 ? Math.round((occupiedRooms / unitCount) * 100) : 0;
-    const yesterdayOccupancyRate = unitCount > 0 ? Math.round((yesterdayOccupiedRooms / unitCount) * 100) : 0;
-
-    const calculateChange = (current, previous) => {
-      if (previous === 0) {
-        return current > 0 ? { change: `+${current}`, changeType: 'increase' } : { change: '', changeType: 'neutral' };
-      }
-      const diff = current - previous;
-      const percentage = Math.round((diff / previous) * 100);
-      if (percentage > 0) return { change: `+${percentage}%`, changeType: 'increase' };
-      if (percentage < 0) return { change: `${percentage}%`, changeType: 'decrease' };
-      return { change: '0%', changeType: 'neutral' };
-    };
-
-    const arrivalsChange = calculateChange(todayArrivalsCount, yesterdayArrivals);
-    const guestsChange = calculateChange(todayGuestsCount, yesterdayGuestsCount);
-    const occupancyChange = calculateChange(occupancyRate, yesterdayOccupancyRate);
-
-    const availabilityPercentage = unitCount > 0 ? Math.round((availableRooms / unitCount) * 100) : 0;
-    const yesterdayAvailableRooms = nights[lastNight]?.availableRooms ?? Math.max(0, totalRoomsCount - yesterdayOccupiedRooms);
-    const yesterdayAvailabilityPercentage = unitCount > 0 ? Math.round((yesterdayAvailableRooms / unitCount) * 100) : 0;
-    const availabilityChange = calculateChange(availabilityPercentage, yesterdayAvailabilityPercentage);
-
-    return {
-      stats: {
-        todayArrivals: { value: todayArrivalsCount, change: arrivalsChange.change, changeType: arrivalsChange.changeType },
-        availableRooms: { value: availableRooms, change: availabilityChange.change, changeType: availabilityChange.changeType },
-        totalGuests: { value: todayGuestsCount, change: guestsChange.change, changeType: guestsChange.changeType },
-        occupancyRate: { value: `${occupancyRate}%`, change: occupancyChange.change, changeType: occupancyChange.changeType },
-      },
-      recentBookings,
-      todayArrivals,
-      todayDeparturesCount,
-      monthlyRevenue: monthlyRevenueTotal,
-      unreadContacts,
-    };
+  getDashboard() { return this.reporting.getDashboard(); }
+  getAnalytics(params: { period?: string; startDate?: string; endDate?: string }) {
+    return this.reporting.getAnalytics(params);
   }
-
-  async getAnalytics(params: { period?: string; startDate?: string; endDate?: string }) {
-    const { period = '30', startDate, endDate } = params;
-    
-    try {
-      // Calculate date range
-      let start, end;
-      if (startDate && endDate) {
-        start = new Date(startDate);
-        end = new Date(endDate);
-      } else {
-        end = new Date();
-        start = new Date();
-        start.setDate(end.getDate() - parseInt(period));
-      }
-
-      // Booking Statistics
-      const bookingStats = await this.bookingModel.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: start, $lte: end }
-          }
-        },
-        {
-          $group: {
-            _id: null,
-            totalBookings: { $sum: 1 },
-            confirmedBookings: {
-              $sum: { $cond: [{ $eq: ['$bookingStatus', 'CONFIRMED'] }, 1, 0] }
-            },
-            cancelledBookings: {
-              $sum: { $cond: [{ $eq: ['$bookingStatus', 'CANCELLED'] }, 1, 0] }
-            },
-            checkedInBookings: {
-              $sum: { $cond: [{ $eq: ['$bookingStatus', 'CHECKED_IN'] }, 1, 0] }
-            },
-            checkedOutBookings: {
-              $sum: { $cond: [{ $eq: ['$bookingStatus', 'CHECKED_OUT'] }, 1, 0] }
-            },
-            totalRevenue: {
-              $sum: { $cond: [{ $eq: ['$paymentStatus', 'PAID'] }, '$totalAmount', 0] }
-            },
-            averageBookingValue: { $avg: '$totalAmount' },
-            totalGuests: { $sum: { $add: ['$adults', '$children'] } },
-            totalNights: {
-              $sum: {
-                $divide: [
-                  { $subtract: ['$checkOut', '$checkIn'] },
-                  1000 * 60 * 60 * 24
-                ]
-              }
-            }
-          }
-        }
-      ]).option({ maxTimeMS: 5000 });
-
-      // Ensure we have valid data even if no bookings found
-      const safeStats = bookingStats && bookingStats.length > 0 ? bookingStats[0] : null;
-      
-      return {
-        dateRange: { start, end },
-        bookingStatistics: safeStats || {
-          totalBookings: 0,
-          confirmedBookings: 0,
-          cancelledBookings: 0,
-          checkedInBookings: 0,
-          checkedOutBookings: 0,
-          totalRevenue: 0,
-          averageBookingValue: 0,
-          totalGuests: 0,
-          totalNights: 0
-        }
-      };
-    } catch (error) {
-      console.error('Error in getAnalytics:', error);
-      // Return safe default data
-      const now = new Date();
-      const defaultStart = new Date();
-      defaultStart.setDate(now.getDate() - parseInt(period));
-      
-      return {
-        dateRange: { start: defaultStart, end: now },
-        bookingStatistics: {
-          totalBookings: 0,
-          confirmedBookings: 0,
-          cancelledBookings: 0,
-          checkedInBookings: 0,
-          checkedOutBookings: 0,
-          totalRevenue: 0,
-          averageBookingValue: 0,
-          totalGuests: 0,
-          totalNights: 0
-        }
-      };
-    }
-  }
-
-  async getRevenueReports(period?: string) {
-    const periodNum = parseInt(period) || 12;
-    
-    const end = new Date();
-    const start = new Date();
-    start.setMonth(end.getMonth() - periodNum);
-
-    try {
-      // Monthly revenue breakdown
-      const monthlyRevenue = await this.bookingModel.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: start, $lte: end },
-            paymentStatus: 'PAID'
-          }
-        },
-        {
-          $group: {
-            _id: {
-              year: { $year: '$createdAt' },
-              month: { $month: '$createdAt' }
-            },
-            revenue: { $sum: '$totalAmount' },
-            bookings: { $sum: 1 },
-            averageBookingValue: { $avg: '$totalAmount' }
-          }
-        },
-        { $sort: { '_id.year': 1, '_id.month': 1 } }
-      ]).option({ maxTimeMS: 5000 });
-
-      // Ensure we have valid data even if no bookings found
-      const safeMonthlyRevenue = monthlyRevenue || [];
-      const totalRevenue = safeMonthlyRevenue.reduce((sum, item) => sum + (item?.revenue || 0), 0);
-
-      return {
-        monthlyRevenue: safeMonthlyRevenue,
-        totalRevenue,
-        period: periodNum,
-        dateRange: { start, end }
-      };
-    } catch (error) {
-      console.error('Error in getRevenueReports:', error);
-      // Return safe default data
-      return {
-        monthlyRevenue: [],
-        totalRevenue: 0,
-        period: periodNum,
-        dateRange: { start, end }
-      };
-    }
-  }
+  getRevenueReports(period?: string) { return this.reporting.getRevenueReports(period); }
 
   async getBookings(params: any) {
     const {
@@ -338,10 +108,12 @@ export class AdminService {
       checkOut,
       guestEmail,
       page = 1,
-      limit = 20,
       sortBy = 'createdAt',
       sortOrder = 'desc'
     } = params;
+    // Capped here as well as in the controller: the ceiling belongs with the
+    // query, so an internal caller cannot bypass it either.
+    const limit = parseListLimit(params.limit);
 
     // Build filter
     const filter: any = {};
@@ -358,14 +130,14 @@ export class AdminService {
     const sort = safeSort(sortBy, BOOKING_SORTABLE_FIELDS, 'createdAt', sortOrder);
 
     // Pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (parseInt(page) - 1) * limit;
 
     const bookings = await this.bookingModel.find(filter)
       .populate('roomId', 'name')
       .populate('userId', 'name email')
       .sort(sort)
       .skip(skip)
-      .limit(parseInt(limit))
+      .limit(limit)
       .lean();
 
     const total = await this.bookingModel.countDocuments(filter);
@@ -374,9 +146,9 @@ export class AdminService {
       bookings,
       pagination: {
         page: parseInt(page),
-        limit: parseInt(limit),
+        limit,
         total,
-        pages: Math.ceil(total / parseInt(limit))
+        pages: Math.ceil(total / limit)
       }
     };
   }
@@ -464,7 +236,7 @@ export class AdminService {
       });
       refundId = refund.id;
       update = refundFields(charge, refund.id);
-      console.log(`✅ Stripe refund ${refund.id} for booking ${booking.bookingNumber}: €${(refund.amount / 100).toFixed(2)}`);
+      this.logger.log(`✅ Stripe refund ${refund.id} for booking ${booking.bookingNumber}: €${(refund.amount / 100).toFixed(2)}`);
     } else {
       if (booking.paymentStatus !== 'PAID') {
         throw new BadRequestException('Nothing has been paid on this booking');
@@ -531,7 +303,7 @@ export class AdminService {
         note: body.cancellationReason,
       });
       refundUpdate = refundFields(charge, refund.id);
-      console.log(`✅ Stripe refund ${refund.id} for cancelled booking ${booking.bookingNumber}: €${requested.toFixed(2)}`);
+      this.logger.log(`✅ Stripe refund ${refund.id} for cancelled booking ${booking.bookingNumber}: €${requested.toFixed(2)}`);
     } else if (requested > 0) {
       const total = Math.round(((booking.refundAmount || 0) + requested) * 100) / 100;
       refundUpdate = {
@@ -541,7 +313,7 @@ export class AdminService {
           ? { paymentStatus: 'REFUNDED' }
           : {}),
       };
-      console.log(`💵 Refund recorded for cancelled booking ${booking.bookingNumber}: €${requested.toFixed(2)}`);
+      this.logger.log(`💵 Refund recorded for cancelled booking ${booking.bookingNumber}: €${requested.toFixed(2)}`);
     }
 
     const updateData: any = {
@@ -636,17 +408,7 @@ export class AdminService {
     };
   }
 
-  async updateBooking(bookingId: string, body: {
-    bookingStatus?: 'PENDING' | 'CONFIRMED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'CANCELLED';
-    paymentStatus?: 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
-    adminNotes?: string;
-    notes?: string;
-    totalAmount?: number;
-    depositAmount?: number;
-    depositPaid?: boolean;
-    depositPaidAt?: Date;
-    postCheckoutEmailSent?: boolean;
-  }) {
+  async updateBooking(bookingId: string, body: UpdateBookingDto) {
     const booking = await this.bookingModel.findById(bookingId);
     if (!booking) {
       throw new NotFoundException('Booking not found');
@@ -663,10 +425,10 @@ export class AdminService {
     if (body.depositPaid !== undefined) {
       updateData.depositPaid = body.depositPaid;
       if (body.depositPaid && !booking.depositPaidAt) {
-        updateData.depositPaidAt = body.depositPaidAt ?? new Date();
+        updateData.depositPaidAt = body.depositPaidAt ? new Date(body.depositPaidAt) : new Date();
       }
     }
-    if (body.depositPaidAt !== undefined) updateData.depositPaidAt = body.depositPaidAt;
+    if (body.depositPaidAt !== undefined) updateData.depositPaidAt = new Date(body.depositPaidAt);
     if (body.postCheckoutEmailSent !== undefined) updateData.postCheckoutEmailSent = body.postCheckoutEmailSent;
 
     const updatedBooking = await this.bookingModel.findByIdAndUpdate(
@@ -724,25 +486,25 @@ export class AdminService {
   };
 
   async getRooms(params: any) {
-    const {
-      page = 1,
-      limit = 20,
-      sortBy = 'createdAt',
-      sortOrder = 'desc'
-    } = params;
+    const { page = 1, sortBy = 'createdAt', sortOrder = 'desc' } = params;
+    const limit = parseListLimit(params.limit);
 
     // Build filter - only filter by fields that actually exist
     const filter: any = {};
 
-    // Build sort
-    const sort: any = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    // safeSort, not `sort[sortBy] = ...`.
+    //
+    // This was the one call site that common/sort.ts was written for and did
+    // not use: GET /admin/rooms?sortBy=<anything> sorted by an arbitrary field,
+    // which is both a collection scan on demand and a field oracle — a
+    // paginated list ordered by a value the caller cannot read still leaks the
+    // ordering of that value.
+    const sort = safeSort(sortBy, ROOM_SORTABLE_FIELDS, 'createdAt', sortOrder);
 
-    // Pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (parseInt(page) - 1) * limit;
 
     const [rooms, total] = await Promise.all([
-      this.roomModel.find(filter).sort(sort).skip(skip).limit(parseInt(limit)).lean(),
+      this.roomModel.find(filter).sort(sort).skip(skip).limit(limit).lean(),
       this.roomModel.countDocuments(filter),
     ]);
 
@@ -750,9 +512,9 @@ export class AdminService {
       rooms,
       pagination: {
         page: parseInt(page),
-        limit: parseInt(limit),
+        limit,
         total,
-        pages: Math.ceil(total / parseInt(limit))
+        pages: Math.ceil(total / limit)
       }
     };
   }
@@ -772,41 +534,44 @@ export class AdminService {
     return { room: { ...room, blockedDates } };
   }
 
-  async createRoom(roomData: any) {
-    const room = new this.roomModel(roomData);
-    await room.save();
-    // RoomsService caches findAll() for 60s and only invalidates on writes made
-    // through itself. Without this, the public /api/rooms list keeps serving the
-    // pre-edit inventory after an admin change.
-    this.roomsService.clearRoomsCache();
-
-    return room;
+  /*
+   * Room writes go through RoomsService.
+   *
+   * These three used to write to `this.roomModel` directly while RoomsService
+   * was *also* injected — purely so that `clearRoomsCache()` could be poked by
+   * hand afterwards, because RoomsService caches findAll() for 60s and only
+   * invalidates on writes made through itself. That comment was the debt
+   * documenting itself: three routes edited a room (PUT /admin/rooms/:id,
+   * PUT /rooms/:id, PUT /admin/calendar/rooms/:id), each with its own
+   * invalidation discipline, and only two went through RoomsService.
+   *
+   * RoomsService owns the cache and invalidates it on every write, so these are
+   * now thin delegations and there is one discipline instead of three. Deletion
+   * in particular gains the cascade and the active-booking check that
+   * RoomsService.remove() performs inside a transaction — deleting a room here
+   * previously orphaned its blocked dates and left bookings pointing at a room
+   * that no longer existed.
+   */
+  async createRoom(roomData: CreateRoomDto) {
+    return this.roomsService.create(roomData);
   }
 
-  async updateRoom(id: string, roomData: any) {
-    const room = await this.roomModel.findByIdAndUpdate(
-      id,
-      { $set: roomData },
-      { new: true, runValidators: true }
-    );
+  async updateRoom(id: string, roomData: UpdateRoomDto) {
+    const room = await this.roomsService.update(id, roomData);
 
     if (!room) {
       throw new NotFoundException('Room not found');
     }
-
-    this.roomsService.clearRoomsCache();
 
     return room;
   }
 
   async deleteRoom(id: string) {
-    const room = await this.roomModel.findByIdAndDelete(id);
+    const room = await this.roomsService.remove(id);
 
     if (!room) {
       throw new NotFoundException('Room not found');
     }
-
-    this.roomsService.clearRoomsCache();
 
     return {
       message: 'Room deleted successfully',
@@ -830,7 +595,7 @@ export class AdminService {
         offer
       };
     } catch (error) {
-      console.error('AdminService.createOffer error:', error);
+      this.logger.error(`createOffer failed: ${error instanceof Error ? error.message : error}`);
       throw error;
     }
   }
@@ -955,11 +720,13 @@ export class AdminService {
   }) {
     const {
       page = 1,
-      limit = 20,
       role,
       isActive,
       search
     } = params;
+    // Capped here as well as in the controller, so the ceiling travels with
+    // the query rather than depending on which caller built the params.
+    const limit = parseListLimit(params.limit);
 
     const filter: any = {};
 
@@ -1063,52 +830,18 @@ export class AdminService {
     return this.roomsService.updateRoomAvailability(roomId, available);
   }
 
-  async updateRoomPricing(roomId: string, pricingData: {
-    basePrice: number;
-    pricingByOccupancy?: { guests: number; price: number }[];
-    taxes?: {
-      vat?: number;
-      municipalFees?: number;
-      environmentalTax?: number;
-    };
-  }) {
-    const room = await this.roomModel.findById(roomId);
-    if (!room) {
-      throw new NotFoundException('Room not found');
-    }
-    
-    room.price = pricingData.basePrice;
-    if (pricingData.pricingByOccupancy) {
-      room.pricingByOccupancy = pricingData.pricingByOccupancy;
-    }
-    
-    return room.save();
+  /**
+   * Delegated, like the other room writes. Writing the price through the model
+   * here left the RoomsService findAll() cache holding the old price for up to
+   * a minute, so the public site kept quoting the previous rate after a change.
+   */
+  async updateRoomPricing(roomId: string, pricingData: UpdateRoomPricingDto) {
+    return this.roomsService.updateRoomPricing(roomId, pricingData);
   }
 
+  /** Delegated: RoomsService already computes exactly this. */
   async getRoomStats() {
-    const totalRooms = await this.roomModel.countDocuments();
-    const availableRooms = await this.roomModel.countDocuments({ available: true });
-
-    const roomTypes = await this.roomModel.aggregate([
-      {
-        $group: {
-          _id: '$capacity',
-          count: { $sum: '$totalRooms' },
-          avgPrice: { $avg: '$price' }
-        }
-      }
-    ]);
-
-    return {
-      totalRooms,
-      availableRooms,
-      occupiedRooms: totalRooms - availableRooms,
-      roomTypes: roomTypes.map(type => ({
-        capacity: type._id,
-        count: type.count,
-        avgPrice: type.avgPrice
-      }))
-    };
+    return this.roomsService.getRoomStats();
   }
 
   /**
@@ -1131,37 +864,23 @@ export class AdminService {
     return { success: true };
   }
 
+  /**
+   * Always a complete settings object, so the panel never has to decide what an
+   * absent field means.
+   *
+   * defaultSettings() used to be a fourth hand-written copy of the field list,
+   * and it had drifted: it echoed back `currency: 'EUR'` while the schema
+   * default was 'EUR' and PricingService hardcoded 'eur', and it named
+   * `overbookingAllowed`, `automaticPricing` and `directBookingDiscount`, none
+   * of which anything read. SETTINGS_DEFAULTS is derived from the one field
+   * declaration in models/settings.model.ts.
+   */
   async getSettings() {
-    const settings = await this.settingsService.getSettings();
-    return { success: true, data: settings || this.defaultSettings() };
+    return { success: true, data: await this.settingsService.getEffectiveSettings() };
   }
 
-  async updateSettings(data: any) {
+  async updateSettings(data: UpdateSettingsDto) {
     const updated = await this.settingsService.upsertSettings(data);
-    return { success: true, data: updated };
-  }
-
-  private defaultSettings() {
-    return {
-      checkInTime: '15:00',
-      checkOutTime: '11:00',
-      minAdvanceBooking: 1,
-      maxAdvanceBooking: 365,
-      cancellationPolicy: 48,
-      overbookingAllowed: false,
-      currency: 'EUR',
-      taxRate: 0,
-      municipalFee: 2.00,
-      environmentalTax: 0,
-      automaticPricing: false,
-      directBookingDiscount: 5,
-      emailNotifications: true,
-      bookingConfirmations: true,
-      reminderNotifications: true,
-      newBookingAlerts: true,
-      lowInventoryAlerts: true,
-      reminderHours: 24,
-      maintenanceMode: false,
-    };
+    return { success: true, data: { ...SETTINGS_DEFAULTS, ...updated } };
   }
 }

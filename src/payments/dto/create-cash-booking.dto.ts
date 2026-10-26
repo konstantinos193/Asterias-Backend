@@ -1,11 +1,10 @@
 import {
   IsString,
-  IsNotEmpty,
   IsNumber,
+  IsInt,
   IsOptional,
   IsBoolean,
   IsObject,
-  IsISO8601,
   IsMongoId,
   ValidateNested,
   Min,
@@ -15,6 +14,8 @@ import {
 import { Type } from 'class-transformer';
 import { OmitType } from '@nestjs/swagger';
 import { GuestInfoDto } from './confirm-payment.dto';
+import { IsAfterStayDate, IsStayDate } from '../../common/validators/stay-dates.validator';
+import { MAX_ADULTS_PER_BOOKING, MAX_CHILDREN_PER_BOOKING } from '../../common/limits';
 
 /**
  * Fields taken straight from what PaymentsService.createCashBooking destructures.
@@ -29,23 +30,24 @@ export class CreateCashBookingDto {
   @IsMongoId()
   roomId: string;
 
-  @IsISO8601()
-  @IsNotEmpty()
+  @IsStayDate()
   checkIn: string;
 
-  @IsISO8601()
-  @IsNotEmpty()
+  @IsStayDate()
+  @IsAfterStayDate('checkIn')
   checkOut: string;
 
-  @IsNumber()
+  @Type(() => Number)
+  @IsInt()
   @Min(1)
-  @Max(50)
+  @Max(MAX_ADULTS_PER_BOOKING)
   adults: number;
 
-  @IsNumber()
-  @Min(0)
-  @Max(50)
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(MAX_CHILDREN_PER_BOOKING)
   children?: number;
 
   /**

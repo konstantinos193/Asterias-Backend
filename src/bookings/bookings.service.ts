@@ -12,6 +12,9 @@ import { RoomCombinationService, CombinationRequest, RoomCombination } from './r
 import { RoomCombinationRequestDto, MultiRoomBookingDto } from './dto/room-combination.dto';
 import { AvailabilityEngine } from '../availability/availability-engine';
 import { PricingService } from '../pricing/pricing.service';
+import { BookingNumberService } from '../common/booking-number/booking-number.service';
+import { BOOKING_STATUS } from '../common/enums';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class BookingsService {
@@ -24,11 +27,77 @@ export class BookingsService {
     private roomCombinationService: RoomCombinationService,
     private readonly availability: AvailabilityEngine,
     private readonly pricingService: PricingService,
+    private readonly bookingNumbers: BookingNumberService,
+    private readonly settingsService: SettingsService,
   ) {}
 
+  /**
+   * Create a booking from the admin API.
+   *
+   * This used to be two lines — `new this.bookingModel(dto).save()` — with no
+   * availability guard, no transaction and no price recomputation: it stored
+   * whatever `totalAmount` arrived in the body. Admin-guarded, so the blast
+   * radius was small, but it was a hole in the one invariant the whole
+   * availability and pricing consolidation exists to protect, and it was the
+   * fourth of six booking-creation sites to get it wrong.
+   *
+   * It now does what the checkout path does:
+   *   - assertSellable inside the transaction, so the room is actually free and
+   *     stays free for the length of the insert;
+   *   - the stay priced by PricingService, not by the caller;
+   *   - the booking number issued by BookingNumberService.
+   *
+   * `totalAmount` is still honoured when sent, because an admin may be
+   * recording a negotiated price — but that is now an explicit override of a
+   * computed figure rather than the only number available.
+   */
   async create(createBookingDto: CreateBookingDto): Promise<Booking> {
-    const booking = new this.bookingModel(createBookingDto);
-    return booking.save();
+    const { roomId, checkIn, checkOut, adults, children, totalAmount, bookingNumber, ...rest } =
+      createBookingDto;
+
+    const checkInDate = new Date(checkIn);
+    const checkOutDate = new Date(checkOut);
+    const occupancy = adults + (children ?? 0);
+
+    const session = await this.connection.startSession();
+    try {
+      let created: BookingDocument;
+
+      await session.withTransaction(async () => {
+        await this.availability.assertSellable(roomId, checkInDate, checkOutDate, session);
+
+        const quote = await this.pricingService.quoteStay(
+          roomId,
+          checkIn,
+          checkOut,
+          adults,
+          children ?? 0,
+        );
+        const taxes = await this.pricingService.applyTaxes(quote.subtotal, quote.nights, occupancy);
+
+        const booking = new this.bookingModel({
+          ...rest,
+          bookingNumber: bookingNumber || (await this.bookingNumbers.next(session)),
+          roomId: new Types.ObjectId(roomId),
+          checkIn: checkInDate,
+          checkOut: checkOutDate,
+          adults,
+          children: children ?? 0,
+          // An admin-supplied figure wins; otherwise the stay is priced here.
+          totalAmount: totalAmount ?? taxes.total,
+          roomSubtotal: quote.subtotal,
+          vatAmount: taxes.vatAmount,
+          municipalFee: taxes.municipalFee,
+          environmentalTax: taxes.environmentalTax,
+        });
+
+        created = await booking.save({ session });
+      });
+
+      return created;
+    } finally {
+      await session.endSession();
+    }
   }
 
   async findAllPaginated(params?: { page?: number; limit?: number; status?: string }): Promise<{ bookings: Booking[]; pagination: { page: number; limit: number; total: number; pages: number } }> {
@@ -88,12 +157,28 @@ export class BookingsService {
     if (!booking) return null;
 
     const status = (booking as any).bookingStatus as string;
-    if (status === 'CANCELLED') return booking as unknown as Booking;
+    if (status === BOOKING_STATUS.CANCELLED) return booking as unknown as Booking;
+
+    // The `cancellationPolicy` setting now applies.
+    //
+    // The owner could set a 48-hour cancellation window in the admin panel and
+    // a guest could still cancel from the account page minutes before arrival:
+    // SettingsService.getCancellationDeadline() was written for this and had
+    // no callers. An admin cancelling through the admin API is unaffected —
+    // that path is AdminService.cancelBooking and is the owner's own decision.
+    if (!(await this.settingsService.isCancellableNow(booking.checkIn))) {
+      const deadline = await this.settingsService.getCancellationDeadline(booking.checkIn);
+      throw new BadRequestException(
+        `This booking can no longer be cancelled online. The deadline was ` +
+          `${deadline?.toISOString().slice(0, 16).replace('T', ' ')} UTC. ` +
+          `Please contact the property.`,
+      );
+    }
 
     const [updated] = await Promise.all([
       this.bookingModel.findByIdAndUpdate(
         bookingId,
-        { bookingStatus: 'CANCELLED', cancelledAt: new Date() },
+        { bookingStatus: BOOKING_STATUS.CANCELLED, cancelledAt: new Date() },
         { returnDocument: 'after' },
       ).exec(),
       this.bookingHistoryModel.create({
@@ -150,6 +235,11 @@ export class BookingsService {
       throw new BadRequestException('Guest email not found');
     }
 
+    // Check-in and check-out times come from settings, not from literals.
+    // '15:00' was hardcoded in three separate files while the owner had a
+    // checkInTime setting that nothing read.
+    const settings = await this.settingsService.getEffectiveSettings();
+
     // Use the proper EmailService methods
     let emailResult;
     const emailData = {
@@ -183,8 +273,8 @@ export class BookingsService {
           roomName: (booking.roomId as any)?.name || 'Δωμάτιο',
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
-          checkInTime: '15:00',
-          checkOutTime: '11:00',
+          checkInTime: settings.checkInTime,
+          checkOutTime: settings.checkOutTime,
           guests: `${booking.adults} adults${booking.children > 0 ? `, ${booking.children} children` : ''}`,
           totalPrice: booking.totalAmount,
           nights: Math.ceil((new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) / (1000 * 60 * 60 * 24))
@@ -242,7 +332,7 @@ export class BookingsService {
   async createMultiRoomBooking(multiRoomBookingDto: MultiRoomBookingDto): Promise<Booking[]> {
     const { combination, checkIn, checkOut, guestFirstName, guestLastName, guestEmail, guestPhone, specialRequests, language, paymentMethod } = multiRoomBookingDto;
 
-    const baseBookingNumber = await this.generateBookingNumber();
+    const baseBookingNumber = await this.bookingNumbers.next();
     const session = await this.connection.startSession();
 
     try {
@@ -279,7 +369,8 @@ export class BookingsService {
           );
 
           for (let j = 0; j < room.count; j++) {
-            const bookingNumber = combination.rooms.length > 1
+            await this.availability.assertSellable(room.roomId, new Date(checkIn), new Date(checkOut), session);
+            const bookingNumber = combination.rooms.length > 1 || room.count > 1
               ? `${baseBookingNumber}-${String.fromCharCode(65 + i)}${j + 1}`
               : baseBookingNumber;
 
@@ -344,15 +435,7 @@ export class BookingsService {
     return this.roomCombinationService.findBestRoom(adults, children, checkIn, checkOut);
   }
 
-  private async generateBookingNumber(): Promise<string> {
-    const year = new Date().getFullYear();
-    const counter = await this.bookingModel.db
-      .collection('counters')
-      .findOneAndUpdate(
-        { _id: `booking:${year}` as any },
-        { $inc: { seq: 1 } },
-        { upsert: true, returnDocument: 'after' },
-      );
-    return `AST-${year}-${String(counter.seq).padStart(3, '0')}`;
-  }
+  // generateBookingNumber() is gone. It was one of two byte-for-byte copies of
+  // the same counter increment, both reaching past Mongoose into a raw
+  // `counters` collection. BookingNumberService is now the only generator.
 }

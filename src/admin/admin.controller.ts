@@ -9,67 +9,88 @@ import {
   Param,
   Query,
   UseGuards,
-  HttpException,
-  HttpStatus,
-  NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { isDayKey, todayAtProperty } from '../availability/availability-rules';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
-import { RequireAdmin } from '../auth/decorators/require-admin.decorator';
 import { MongoObjectIdPipe } from '../common/pipes/mongodb-object-id.pipe';
-import { RefundReason } from '../payments/stripe-refunds';
+import { parseListLimit, parsePageNumber } from '../common/limits';
+import { UserRole } from '../common/enums';
+import { CreateRoomDto } from '../rooms/dto/create-room.dto';
+import { UpdateRoomDto } from '../rooms/dto/update-room.dto';
+import { CreateOfferDto, UpdateOfferDto } from '../offers/dto/offer.dto';
+import {
+  BlockRoomDatesDto,
+  BulkBookingIdsDto,
+  BulkUpdateBookingStatusDto,
+  CancelBookingDto,
+  RefundBookingDto,
+  SeasonalPricingDto,
+  UpdateBookingDto,
+  UpdateBookingStatusDto,
+  UpdateRoomAvailabilityDto,
+  UpdateRoomPricingDto,
+  UpdateSettingsDto,
+} from './dto/admin.dto';
 
+/**
+ * The admin API.
+ *
+ * Two things used to be true of almost every handler here and are no longer:
+ *
+ * 1. Each one wrapped its service call in try/catch and rethrew a generic 500.
+ *    AdminService raises the right exceptions — NotFoundException('Room not
+ *    found'), BadRequestException, ConflictException — and all 39 handlers
+ *    discarded them, so the panel received `500 Failed to update room` where it
+ *    should have had a 404 and could not tell "does not exist" from "server is
+ *    broken". That was ~260 lines whose only effect was to defeat
+ *    common/filters/http-exception.filter.ts, which already does this job and
+ *    already sanitises Mongoose validation and duplicate-key errors. The filter
+ *    is registered globally in main.ts; handlers now just let exceptions
+ *    through, and Stripe's own refusals are translated by the filter too.
+ *
+ * 2. Every body was an inline structural type or `any`, which the global
+ *    ValidationPipe cannot act on. They are DTO classes now — see dto/admin.dto.ts.
+ *
+ * The class-level @UseGuards covers all of these routes. The per-route
+ * duplicates that used to accompany it were removed: repeating a guard that is
+ * already applied suggests the ones without it are somehow different.
+ */
+@ApiTags('admin')
+@ApiBearerAuth()
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
-@RequireAdmin()
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
   @Get('dashboard')
-  async getDashboard() {
-    try {
-      return await this.adminService.getDashboard();
-    } catch (error) {
-      throw new HttpException(
-        'Failed to get dashboard data',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: "Today's arrivals, departures, occupancy and revenue" })
+  getDashboard() {
+    return this.adminService.getDashboard();
   }
 
   @Get('analytics')
-  async getAnalytics(
+  @ApiOperation({ summary: 'Booking and revenue analytics for a period' })
+  getAnalytics(
     @Query('period') period?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    try {
-      return await this.adminService.getAnalytics({ period, startDate, endDate });
-    } catch (error) {
-      throw new HttpException(
-        'Failed to get analytics data',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+    return this.adminService.getAnalytics({ period, startDate, endDate });
   }
 
   @Get('revenue-reports')
-  async getRevenueReports(@Query('period') period?: string) {
-    try {
-      return await this.adminService.getRevenueReports(period);
-    } catch (error) {
-      throw new HttpException(
-        'Failed to get revenue reports',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Revenue broken down by period' })
+  getRevenueReports(@Query('period') period?: string) {
+    return this.adminService.getRevenueReports(period);
   }
 
   @Get('bookings')
-  async getBookings(
+  @ApiOperation({ summary: 'List bookings, filtered and paged' })
+  getBookings(
     @Query('status') status?: string,
     @Query('paymentStatus') paymentStatus?: string,
     @Query('checkIn') checkIn?: string,
@@ -80,198 +101,97 @@ export class AdminController {
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: string,
   ) {
-    try {
-      return await this.adminService.getBookings({
-        status,
-        paymentStatus,
-        checkIn,
-        checkOut,
-        guestEmail,
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 20,
-        sortBy: sortBy || 'createdAt',
-        sortOrder: sortOrder || 'desc',
-      });
-    } catch (error) {
-      throw new HttpException(
-        'Failed to get bookings',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+    return this.adminService.getBookings({
+      status,
+      paymentStatus,
+      checkIn,
+      checkOut,
+      guestEmail,
+      page: parsePageNumber(page),
+      // Capped. This was `parseInt(limit) || 20` feeding `.limit()` directly,
+      // so ?limit=9999999 returned the whole collection.
+      limit: parseListLimit(limit),
+      sortBy: sortBy || 'createdAt',
+      sortOrder: sortOrder || 'desc',
+    });
   }
 
   @Get('bookings/:bookingId')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async getBookingById(@Param('bookingId', MongoObjectIdPipe) bookingId: string) {
-    try {
-      return await this.adminService.getBookingById(bookingId);
-    } catch (error: any) {
-      if (error.message === 'Booking not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException(
-        'Failed to get booking',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'One booking in full' })
+  getBookingById(@Param('bookingId', MongoObjectIdPipe) bookingId: string) {
+    return this.adminService.getBookingById(bookingId);
   }
 
   @Put('bookings/:bookingId')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async updateBooking(
+  @ApiOperation({ summary: 'Update a booking' })
+  updateBooking(
     @Param('bookingId', MongoObjectIdPipe) bookingId: string,
-    @Body() body: {
-      bookingStatus?: 'PENDING' | 'CONFIRMED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'CANCELLED';
-      paymentStatus?: 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
-      adminNotes?: string;
-      notes?: string;
-      totalAmount?: number;
-      depositAmount?: number;
-      depositPaid?: boolean;
-      depositPaidAt?: Date;
-      postCheckoutEmailSent?: boolean;
-    },
+    @Body() body: UpdateBookingDto,
   ) {
-    try {
-      return await this.adminService.updateBooking(bookingId, body);
-    } catch (error: any) {
-      if (error.message === 'Booking not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException(
-        'Failed to update booking',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+    return this.adminService.updateBooking(bookingId, body);
   }
 
   /** The payment behind a booking, read live from Stripe for card payments. */
   @Get('bookings/:bookingId/payment')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async getBookingPayment(@Param('bookingId', MongoObjectIdPipe) bookingId: string) {
-    try {
-      return await this.adminService.getBookingPayment(bookingId);
-    } catch (error: any) {
-      throw paymentError(error, 'Failed to load payment');
-    }
+  @ApiOperation({ summary: 'The payment behind a booking, read live from Stripe' })
+  getBookingPayment(@Param('bookingId', MongoObjectIdPipe) bookingId: string) {
+    return this.adminService.getBookingPayment(bookingId);
   }
 
   /** Refunds part or all of a booking's payment without cancelling it. */
   @Post('bookings/:bookingId/refund')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async refundBooking(
+  @ApiOperation({ summary: "Refund part or all of a booking's payment" })
+  refundBooking(
     @Param('bookingId', MongoObjectIdPipe) bookingId: string,
-    @Body() body: { amount?: number; reason?: RefundReason; note?: string },
+    @Body() body: RefundBookingDto,
   ) {
-    try {
-      return await this.adminService.refundBooking(bookingId, body);
-    } catch (error: any) {
-      throw paymentError(error, 'Failed to refund');
-    }
+    return this.adminService.refundBooking(bookingId, body);
   }
 
   @Put('bookings/:bookingId/cancel')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async cancelBooking(
+  @ApiOperation({ summary: 'Cancel a booking, optionally refunding it' })
+  cancelBooking(
     @Param('bookingId', MongoObjectIdPipe) bookingId: string,
-    @Body() body: { cancellationReason?: string; refundAmount?: number; adminNotes?: string },
+    @Body() body: CancelBookingDto,
   ) {
-    try {
-      return await this.adminService.cancelBooking(bookingId, body);
-    } catch (error: any) {
-      if (error.message === 'Booking not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw paymentError(error, 'Failed to cancel booking');
-    }
+    return this.adminService.cancelBooking(bookingId, body);
   }
 
   @Put('bookings/bulk/status')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async bulkUpdateBookingStatus(
-    @Body() body: { bookingIds: string[]; status: 'CONFIRMED' | 'PENDING' | 'CANCELLED' | 'CHECKED_IN' | 'CHECKED_OUT'; adminNotes?: string },
-  ) {
-    try {
-      return await this.adminService.bulkUpdateBookingStatus(body);
-    } catch (error: any) {
-      if (error.message === 'No booking IDs provided' || error.message === 'No bookings found with the provided IDs') {
-        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-      }
-      throw new HttpException(
-        'Failed to update bookings',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Set the status of several bookings at once' })
+  bulkUpdateBookingStatus(@Body() body: BulkUpdateBookingStatusDto) {
+    return this.adminService.bulkUpdateBookingStatus(body);
   }
 
   @Delete('bookings/bulk')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async bulkDeleteBookings(@Body() body: { bookingIds: string[] }) {
-    try {
-      return await this.adminService.bulkDeleteBookings(body.bookingIds);
-    } catch (error: any) {
-      if (error.message === 'No booking IDs provided' || error.message === 'No bookings found with the provided IDs') {
-        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-      }
-      throw new HttpException(
-        'Failed to delete bookings',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Delete several bookings at once' })
+  bulkDeleteBookings(@Body() body: BulkBookingIdsDto) {
+    return this.adminService.bulkDeleteBookings(body.bookingIds);
   }
 
   @Put('bookings/:bookingId/status')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async updateBookingStatus(
+  @ApiOperation({ summary: "Set one booking's status" })
+  updateBookingStatus(
     @Param('bookingId', MongoObjectIdPipe) bookingId: string,
-    @Body() body: { status: 'CONFIRMED' | 'PENDING' | 'CANCELLED' | 'CHECKED_IN' | 'CHECKED_OUT'; adminNotes?: string },
+    @Body() body: UpdateBookingStatusDto,
   ) {
-    try {
-      return await this.adminService.updateBookingStatus(bookingId, body);
-    } catch (error: any) {
-      if (error.message === 'Booking not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      if (error.message === 'Invalid status') {
-        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-      }
-      throw new HttpException(
-        'Failed to update booking status',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+    return this.adminService.updateBookingStatus(bookingId, body);
   }
 
   @Get('occupancy')
-  async getOccupancy(
-    @Query('from') from?: string,
-    @Query('days') days?: string,
-  ) {
+  @ApiOperation({ summary: 'Night-by-night occupancy from a start date' })
+  getOccupancy(@Query('from') from?: string, @Query('days') days?: string) {
     const start = from ?? todayAtProperty();
     if (!isDayKey(start)) {
       throw new BadRequestException('from must be a date in YYYY-MM-DD form');
     }
     const n = Math.min(Math.max(parseInt(days, 10) || 30, 1), 92);
-    try {
-      return await this.adminService.getOccupancy(start, n);
-    } catch (error) {
-      throw new HttpException(
-        'Failed to get occupancy',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+    return this.adminService.getOccupancy(start, n);
   }
 
   @Get('rooms')
-  async getRooms(
+  @ApiOperation({ summary: 'List rooms, filtered and paged' })
+  getRooms(
     @Query('available') available?: string,
     @Query('roomType') roomType?: string,
     @Query('page') page?: string,
@@ -279,466 +199,218 @@ export class AdminController {
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: string,
   ) {
-    try {
-      return await this.adminService.getRooms({
-        available: available === 'true',
-        roomType,
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 20,
-        sortBy: sortBy || 'createdAt',
-        sortOrder: sortOrder || 'desc',
-      });
-    } catch (error) {
-      throw new HttpException(
-        'Failed to get rooms',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+    return this.adminService.getRooms({
+      available: available === 'true',
+      roomType,
+      page: parsePageNumber(page),
+      limit: parseListLimit(limit),
+      sortBy: sortBy || 'createdAt',
+      sortOrder: sortOrder || 'desc',
+    });
+  }
+
+  // Declared before 'rooms/:id' so the literal segments are not captured as an
+  // id. Nest matches in declaration order.
+  @Get('rooms/types')
+  @ApiOperation({ summary: 'Distinct room types with aggregate capacity' })
+  getRoomTypes() {
+    return this.adminService.getRoomTypes();
+  }
+
+  @Get('rooms/stats')
+  @ApiOperation({ summary: 'Room counts and average price by capacity' })
+  getRoomStats() {
+    return this.adminService.getRoomStats();
   }
 
   @Get('rooms/:id')
-  async getRoomById(@Param('id', MongoObjectIdPipe) id: string) {
-    try {
-      return await this.adminService.getRoomById(id);
-    } catch (error: any) {
-      if (error.message === 'Room not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException(
-        'Failed to get room',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'One room in full' })
+  getRoomById(@Param('id', MongoObjectIdPipe) id: string) {
+    return this.adminService.getRoomById(id);
   }
 
   @Post('rooms')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async createRoom(@Body() body: any) {
-    try {
-      return await this.adminService.createRoom(body);
-    } catch (error: any) {
-      if (error.name === 'ValidationError') {
-        const messages = Object.values(error.errors).map((err: any) => err.message);
-        throw new HttpException(messages.join(', '), HttpStatus.BAD_REQUEST);
-      }
-      if (error.message) {
-        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-      }
-      throw new HttpException('Failed to create room', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+  @ApiOperation({ summary: 'Create a room' })
+  createRoom(@Body() body: CreateRoomDto) {
+    return this.adminService.createRoom(body);
   }
 
   @Put('rooms/:id')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async updateRoom(@Param('id', MongoObjectIdPipe) id: string, @Body() body: any) {
-    try {
-      return await this.adminService.updateRoom(id, body);
-    } catch (error: any) {
-      if (error.message === 'Room not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      if (error.name === 'ValidationError') {
-        const messages = Object.values(error.errors).map((err: any) => err.message);
-        throw new HttpException(messages.join(', '), HttpStatus.BAD_REQUEST);
-      }
-      if (error.message) {
-        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-      }
-      throw new HttpException('Failed to update room', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+  @ApiOperation({ summary: 'Update a room' })
+  updateRoom(@Param('id', MongoObjectIdPipe) id: string, @Body() body: UpdateRoomDto) {
+    return this.adminService.updateRoom(id, body);
   }
 
   @Delete('rooms/:id')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async deleteRoom(@Param('id', MongoObjectIdPipe) id: string) {
-    try {
-      return await this.adminService.deleteRoom(id);
-    } catch (error: any) {
-      if (error.message === 'Room not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException(
-        'Failed to delete room',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+  @ApiOperation({ summary: 'Delete a room, if it has no active bookings' })
+  deleteRoom(@Param('id', MongoObjectIdPipe) id: string) {
+    return this.adminService.deleteRoom(id);
+  }
+
+  @Get('rooms/:id/availability')
+  @ApiOperation({ summary: 'Night-by-night availability for one room' })
+  getRoomAvailability(
+    @Param('id', MongoObjectIdPipe) id: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+  ) {
+    if (!isDayKey(startDate) || !isDayKey(endDate)) {
+      throw new BadRequestException('startDate and endDate must be dates in YYYY-MM-DD form');
     }
+    return this.adminService.getRoomAvailability(id, startDate, endDate);
+  }
+
+  @Patch('rooms/:id/availability')
+  @ApiOperation({ summary: 'Put a room on or off sale indefinitely' })
+  updateRoomAvailability(
+    @Param('id', MongoObjectIdPipe) id: string,
+    @Body() body: UpdateRoomAvailabilityDto,
+  ) {
+    return this.adminService.updateRoomAvailability(id, body.available);
+  }
+
+  @Patch('rooms/:id/pricing')
+  @ApiOperation({ summary: "Set a room's base price and per-occupancy prices" })
+  updateRoomPricing(
+    @Param('id', MongoObjectIdPipe) id: string,
+    @Body() pricingData: UpdateRoomPricingDto,
+  ) {
+    return this.adminService.updateRoomPricing(id, pricingData);
+  }
+
+  @Post('rooms/:id/block')
+  @ApiOperation({ summary: 'Close a date range for one room' })
+  blockRoomDates(
+    @Param('id', MongoObjectIdPipe) id: string,
+    @Body() body: BlockRoomDatesDto,
+  ) {
+    return this.adminService.blockRoomDates(id, body.startDate, body.endDate, body.reason);
+  }
+
+  @Delete('rooms/:id/block/:blockId')
+  @ApiOperation({ summary: 'Reopen a closed date range' })
+  unblockRoomDates(
+    @Param('id', MongoObjectIdPipe) id: string,
+    @Param('blockId', MongoObjectIdPipe) blockId: string,
+  ) {
+    return this.adminService.unblockRoomDates(id, blockId);
   }
 
   @Get('offers')
-  async getOffers(
+  @ApiOperation({ summary: 'List offers, paged' })
+  getOffers(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('active') active?: string,
   ) {
-    try {
-      return await this.adminService.getOffers({
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 20,
-        active: active !== undefined ? active === 'true' : undefined,
-      });
-    } catch (error) {
-      throw new HttpException(
-        'Failed to get offers',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+    return this.adminService.getOffers({
+      page: parsePageNumber(page),
+      limit: parseListLimit(limit),
+      active: active !== undefined ? active === 'true' : undefined,
+    });
   }
 
   @Get('offers/:offerId')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async getOfferById(@Param('offerId', MongoObjectIdPipe) offerId: string) {
-    try {
-      return await this.adminService.getOfferById(offerId);
-    } catch (error: any) {
-      if (error.message === 'Offer not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException(
-        'Failed to get offer',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'One offer in full' })
+  getOfferById(@Param('offerId', MongoObjectIdPipe) offerId: string) {
+    return this.adminService.getOfferById(offerId);
   }
 
   @Post('offers')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async createOffer(@Body() body: any) {
-    try {
-      return await this.adminService.createOffer(body);
-    } catch (error: any) {
-      console.error('AdminController.createOffer error:', error);
-
-      // Handle specific validation errors
-      if (error.message === 'End date must be after start date' ||
-          error.message === 'Offer code already exists') {
-        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-      }
-
-      // Handle mongoose validation errors
-      if (error.name === 'ValidationError') {
-        const messages = Object.values(error.errors).map((err: any) => err.message);
-        throw new HttpException(messages.join(', '), HttpStatus.BAD_REQUEST);
-      }
-
-      // Handle other known errors
-      if (error.message) {
-        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-      }
-      
-      // Fallback for unknown errors
-      throw new HttpException(
-        'Failed to create offer',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Create an offer' })
+  createOffer(@Body() body: CreateOfferDto) {
+    return this.adminService.createOffer(body);
   }
 
   @Put('offers/:offerId')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async updateOffer(
+  @ApiOperation({ summary: 'Update an offer' })
+  updateOffer(
     @Param('offerId', MongoObjectIdPipe) offerId: string,
-    @Body() body: any,
+    @Body() body: UpdateOfferDto,
   ) {
-    try {
-      return await this.adminService.updateOffer(offerId, body);
-    } catch (error: any) {
-      if (error.message === 'Offer not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      if (error.message === 'End date must be after start date') {
-        throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-      }
-      throw new HttpException(
-        'Failed to update offer',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+    return this.adminService.updateOffer(offerId, body);
   }
 
   @Delete('offers/:offerId')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async deleteOffer(@Param('offerId', MongoObjectIdPipe) offerId: string) {
-    try {
-      return await this.adminService.deleteOffer(offerId);
-    } catch (error: any) {
-      if (error.message === 'Offer not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException(
-        'Failed to delete offer',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Delete an offer' })
+  deleteOffer(@Param('offerId', MongoObjectIdPipe) offerId: string) {
+    return this.adminService.deleteOffer(offerId);
   }
 
   @Put('offers/:offerId/toggle')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async toggleOfferStatus(@Param('offerId', MongoObjectIdPipe) offerId: string) {
-    try {
-      return await this.adminService.toggleOfferStatus(offerId);
-    } catch (error: any) {
-      if (error.message === 'Offer not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException(
-        'Failed to toggle offer status',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Activate or deactivate an offer' })
+  toggleOfferStatus(@Param('offerId', MongoObjectIdPipe) offerId: string) {
+    return this.adminService.toggleOfferStatus(offerId);
   }
 
   // ── Seasonal pricing (property-wide, per room type) ──
+
   @Get('seasonal')
-  async getSeasonalPricing() {
-    try {
-      return await this.adminService.getSeasonalPricing();
-    } catch (error) {
-      throw new HttpException('Failed to get seasonal pricing', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+  @ApiOperation({ summary: 'All seasonal pricing periods' })
+  getSeasonalPricing() {
+    return this.adminService.getSeasonalPricing();
   }
 
   // The nightly rate for 2/3/4 guests on each night, as guests are charged it.
   @Get('seasonal/calendar')
-  async getRateCalendar(@Query('from') from?: string, @Query('days') days?: string) {
+  @ApiOperation({ summary: 'Nightly rate per guest tier, as guests are charged it' })
+  getRateCalendar(@Query('from') from?: string, @Query('days') days?: string) {
     const start = from ?? todayAtProperty();
     if (!isDayKey(start)) {
       throw new BadRequestException('from must be a date in YYYY-MM-DD form');
     }
     const n = Math.min(Math.max(parseInt(days, 10) || 42, 1), 92);
-    try {
-      return await this.adminService.getRateCalendar(start, n);
-    } catch (error) {
-      throw new HttpException('Failed to get rate calendar', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+    return this.adminService.getRateCalendar(start, n);
   }
 
   @Post('seasonal')
-  async createSeasonalPricing(@Body() body: any) {
-    try {
-      return await this.adminService.createSeasonalPricing(body);
-    } catch (error: any) {
-      if (error instanceof HttpException) throw error;
-      throw new HttpException(error?.message || 'Failed to create seasonal period', HttpStatus.BAD_REQUEST);
-    }
+  @ApiOperation({ summary: 'Create a seasonal pricing period' })
+  createSeasonalPricing(@Body() body: SeasonalPricingDto) {
+    return this.adminService.createSeasonalPricing(body);
   }
 
   @Put('seasonal/:id')
-  async updateSeasonalPricing(@Param('id', MongoObjectIdPipe) id: string, @Body() body: any) {
-    try {
-      return await this.adminService.updateSeasonalPricing(id, body);
-    } catch (error: any) {
-      if (error instanceof HttpException) throw error;
-      throw new HttpException(error?.message || 'Failed to update seasonal period', HttpStatus.BAD_REQUEST);
-    }
+  @ApiOperation({ summary: 'Update a seasonal pricing period' })
+  updateSeasonalPricing(
+    @Param('id', MongoObjectIdPipe) id: string,
+    @Body() body: SeasonalPricingDto,
+  ) {
+    return this.adminService.updateSeasonalPricing(id, body);
   }
 
   @Delete('seasonal/:id')
-  async deleteSeasonalPricing(@Param('id', MongoObjectIdPipe) id: string) {
-    try {
-      return await this.adminService.deleteSeasonalPricing(id);
-    } catch (error: any) {
-      if (error instanceof HttpException) throw error;
-      throw new HttpException(error?.message || 'Failed to delete seasonal period', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+  @ApiOperation({ summary: 'Delete a seasonal pricing period' })
+  deleteSeasonalPricing(@Param('id', MongoObjectIdPipe) id: string) {
+    return this.adminService.deleteSeasonalPricing(id);
   }
 
   @Get('users')
-  async getUsers(
+  @ApiOperation({ summary: 'List users, filtered and paged' })
+  getUsers(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
-    @Query('role') role?: 'ADMIN' | 'USER',
+    @Query('role') role?: UserRole,
     @Query('isActive') isActive?: string,
     @Query('search') search?: string,
   ) {
-    try {
-      return await this.adminService.getUsers({
-        page: parseInt(page) || 1,
-        limit: parseInt(limit) || 20,
-        role,
-        isActive: isActive !== undefined ? isActive === 'true' : undefined,
-        search,
-      });
-    } catch (error) {
-      throw new HttpException(
-        'Failed to get users',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  // Room Management endpoints for Milestone 2
-  @Get('rooms/types')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async getRoomTypes() {
-    try {
-      return await this.adminService.getRoomTypes();
-    } catch (error) {
-      throw new HttpException(
-        'Failed to get room types',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Get('rooms/:id/availability')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async getRoomAvailability(
-    @Param('id', MongoObjectIdPipe) id: string,
-    @Query('startDate') startDate: string,
-    @Query('endDate') endDate: string,
-  ) {
-    try {
-      return await this.adminService.getRoomAvailability(id, startDate, endDate);
-    } catch (error: any) {
-      if (error.message === 'Room not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException(
-        'Failed to get room availability',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Patch('rooms/:id/availability')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async updateRoomAvailability(
-    @Param('id', MongoObjectIdPipe) id: string,
-    @Body('available') available: boolean,
-  ) {
-    try {
-      return await this.adminService.updateRoomAvailability(id, available);
-    } catch (error: any) {
-      if (error.message === 'Room not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException(
-        'Failed to update room availability',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Patch('rooms/:id/pricing')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async updateRoomPricing(
-    @Param('id', MongoObjectIdPipe) id: string,
-    @Body() pricingData: {
-      basePrice: number;
-      pricingByOccupancy?: { guests: number; price: number }[];
-      taxes?: {
-        vat?: number;
-        municipalFees?: number;
-        environmentalTax?: number;
-      };
-    },
-  ) {
-    try {
-      return await this.adminService.updateRoomPricing(id, pricingData);
-    } catch (error: any) {
-      if (error.message === 'Room not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException(
-        'Failed to update room pricing',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Get('rooms/stats')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async getRoomStats() {
-    try {
-      return await this.adminService.getRoomStats();
-    } catch (error) {
-      throw new HttpException(
-        'Failed to get room statistics',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Post('rooms/:id/block')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async blockRoomDates(
-    @Param('id', MongoObjectIdPipe) id: string,
-    @Body() body: { startDate: string; endDate: string; reason?: string },
-  ) {
-    try {
-      return await this.adminService.blockRoomDates(id, body.startDate, body.endDate, body.reason);
-    } catch (error: any) {
-      if (error.message === 'Room not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException('Failed to block dates', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
-
-  @Delete('rooms/:id/block/:blockId')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async unblockRoomDates(
-    @Param('id', MongoObjectIdPipe) id: string,
-    @Param('blockId') blockId: string,
-  ) {
-    try {
-      return await this.adminService.unblockRoomDates(id, blockId);
-    } catch (error: any) {
-      if (error.message === 'Room not found') {
-        throw new HttpException(error.message, HttpStatus.NOT_FOUND);
-      }
-      throw new HttpException('Failed to unblock dates', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+    return this.adminService.getUsers({
+      page: parsePageNumber(page),
+      limit: parseListLimit(limit),
+      role,
+      isActive: isActive !== undefined ? isActive === 'true' : undefined,
+      search,
+    });
   }
 
   @Get('settings')
-  async getSettings() {
-    try {
-      return await this.adminService.getSettings();
-    } catch (error) {
-      throw new HttpException('Failed to get settings', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+  @ApiOperation({ summary: 'Property settings' })
+  getSettings() {
+    return this.adminService.getSettings();
   }
 
   @Put('settings')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async updateSettings(@Body() body: any) {
-    try {
-      return await this.adminService.updateSettings(body);
-    } catch (error) {
-      throw new HttpException('Failed to update settings', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+  @ApiOperation({ summary: 'Update property settings' })
+  updateSettings(@Body() body: UpdateSettingsDto) {
+    return this.adminService.updateSettings(body);
   }
-}
-
-/**
- * Keeps the reason a payment action failed: our own checks are already
- * HttpExceptions, and Stripe's refusals (amount too high, charge disputed)
- * carry a message the owner can act on.
- */
-function paymentError(error: any, fallback: string): HttpException {
-  if (error instanceof HttpException) return error;
-  if (error?.type?.startsWith?.('Stripe')) {
-    return new HttpException(`Stripe: ${error.message}`, HttpStatus.BAD_GATEWAY);
-  }
-  if (error?.message === 'Booking not found') {
-    return new HttpException(error.message, HttpStatus.NOT_FOUND);
-  }
-  return new HttpException(fallback, HttpStatus.INTERNAL_SERVER_ERROR);
 }

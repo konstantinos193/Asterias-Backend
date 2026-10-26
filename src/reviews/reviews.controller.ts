@@ -1,3 +1,4 @@
+import { Public, Authenticated } from '../auth/decorators/access.decorator';
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, NotFoundException, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { ReviewsService } from './reviews.service';
@@ -22,6 +23,7 @@ export class ReviewsController {
     return this.reviewsService.create(createReviewDto);
   }
 
+  @Public()
   @Get()
   @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get all reviews with filtering and pagination' })
@@ -46,6 +48,7 @@ export class ReviewsController {
     });
   }
 
+  @Public()
   @Get('stats')
   @ApiOperation({ summary: 'Get review statistics and rating breakdown' })
   @ApiResponse({ status: 200, description: 'Review statistics retrieved successfully' })
@@ -53,6 +56,7 @@ export class ReviewsController {
     return this.reviewsService.getRatingStats();
   }
 
+  @Public()
   @Get('recent')
   @ApiOperation({ summary: 'Get recent reviews' })
   @ApiResponse({ status: 200, description: 'Recent reviews retrieved successfully' })
@@ -60,6 +64,7 @@ export class ReviewsController {
     return this.reviewsService.getRecentReviews(limit ? parseInt(limit) : 10);
   }
 
+  @Public()
   @Get('featured')
   @ApiOperation({ summary: 'Get featured reviews' })
   @ApiResponse({ status: 200, description: 'Featured reviews retrieved successfully' })
@@ -67,6 +72,7 @@ export class ReviewsController {
     return this.reviewsService.getFeaturedReviews(limit ? parseInt(limit) : 5);
   }
 
+  @Public()
   @Get('sentiment')
   @ApiOperation({ summary: 'Get sentiment analysis of reviews' })
   @ApiResponse({ status: 200, description: 'Sentiment analysis retrieved successfully' })
@@ -74,6 +80,7 @@ export class ReviewsController {
     return this.reviewsService.getSentimentAnalysis();
   }
 
+  @Public()
   @Get(':id')
   @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get review by ID' })

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AvailabilityEngine } from './availability-engine';
+import { AvailabilityEngine, MAX_RANGE_DAYS } from './availability-engine';
 import { addDays, dayKey, nightsBetween, summarizeProperty } from './availability-rules';
 
 /**
@@ -68,6 +68,12 @@ export class AvailabilityService {
 
   async getCalendarAvailability(month?: number, year?: number) {
     return this.engine.getPropertyCalendar(month, year);
+  }
+
+  /** Everything the guest date picker needs, in one request. */
+  async getCalendarRange(from?: string, days?: number) {
+    const start = from ? dayKey(from) : this.engine.today();
+    return this.engine.getPropertyRange(start, days ?? MAX_RANGE_DAYS);
   }
 
   async getAvailabilityOverview() {

@@ -17,7 +17,13 @@ import {
   summarizeProperty,
   todayAtProperty,
 } from './availability-rules';
-import { availabilityRevision, bumpAvailabilityRevision } from './availability-revision';
+
+/**
+ * How far ahead the guest date picker may ask in one go. Long enough to cover a
+ * whole closed winter plus the season after it, so the picker can tell the guest
+ * when the property opens again without walking month by month.
+ */
+export const MAX_RANGE_DAYS = 400;
 
 /** What a stay-length question answers with. */
 export interface RoomSellability {
@@ -38,9 +44,6 @@ export interface RoomSellability {
 export class AvailabilityEngine {
   private readonly logger = new Logger(AvailabilityEngine.name);
 
-  /** Only the month-at-a-time property calendar is cached; it is the hot path. */
-  private calendarCache = new Map<string, { data: unknown; timestamp: number; revision: number }>();
-  private readonly CALENDAR_CACHE_TTL_MS = 60_000;
 
   constructor(
     @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
@@ -49,16 +52,8 @@ export class AvailabilityEngine {
     private blockModel: Model<RoomBlockedDateDocument>,
   ) {}
 
-  /**
-   * Drop the cached calendars. Writes do this on their own — the Room, Booking
-   * and RoomBlockedDate schemas bump the availability revision and a cached
-   * month from an older revision is ignored — so this is only for callers that
-   * want the next read to go to the database no matter what.
-   */
-  invalidate() {
-    this.calendarCache.clear();
-    bumpAvailabilityRevision();
-  }
+  /** Reads go to Mongo so every live instance sees committed writes. */
+  invalidate() {}
 
   // ─── The primitive: room × night ──────────────────────────────────────────
 
@@ -100,24 +95,38 @@ export class AvailabilityEngine {
     const m = month ?? now.getMonth() + 1;
     const y = year ?? now.getFullYear();
 
-    const cacheKey = `${y}-${m}`;
-    const revision = availabilityRevision();
-    const cached = this.calendarCache.get(cacheKey);
-    if (
-      cached &&
-      cached.revision === revision &&
-      Date.now() - cached.timestamp < this.CALENDAR_CACHE_TTL_MS
-    ) {
-      return cached.data as { month: number; year: number; availability: Record<string, PropertyNight> };
-    }
-
     const from = `${y}-${String(m).padStart(2, '0')}-01`;
     const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
 
     const occupancy = await this.getOccupancy(from, days);
     const result = { month: m, year: y, availability: summarizeProperty(occupancy) };
 
-    this.calendarCache.set(cacheKey, { data: result, timestamp: Date.now(), revision });
+    return result;
+  }
+
+  /**
+   * Many months of the property in one answer, with the first night that can
+   * actually be booked. The picker used to ask a month at a time, which meant a
+   * request per arrow press and — out of season, when every near night is shut —
+   * a grid the guest could not click anywhere in, with no hint of where the
+   * open dates start.
+   */
+  async getPropertyRange(
+    from: string,
+    days: number,
+  ): Promise<{
+    from: string;
+    days: number;
+    firstOpenDate: string | null;
+    availability: Record<string, PropertyNight>;
+  }> {
+    const span = Math.min(MAX_RANGE_DAYS, Math.max(1, Math.trunc(days)));
+
+    const occupancy = await this.getOccupancy(from, span);
+    const availability = summarizeProperty(occupancy);
+    const firstOpenDate = occupancy.dates.find((date) => availability[date]?.isAvailable) ?? null;
+    const result = { from, days: span, firstOpenDate, availability };
+
     return result;
   }
 
@@ -228,6 +237,16 @@ export class AvailabilityEngine {
     checkOut: Date,
     session?: ClientSession,
   ): Promise<void> {
+    // Snapshot reads alone allow write skew: two transactions can both see a
+    // free room and insert different bookings. Writing the same room first
+    // makes Mongo retry one transaction against the committed inventory.
+    if (session) {
+      await this.roomModel.updateOne(
+        { _id: new Types.ObjectId(roomId) },
+        { $inc: { inventoryRevision: 1 } },
+        { session },
+      );
+    }
     const sellability = await this.getSellability(checkIn, checkOut, [roomId], session);
     const state = sellability.get(String(roomId));
 

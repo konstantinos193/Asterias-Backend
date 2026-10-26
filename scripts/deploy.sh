@@ -143,7 +143,43 @@ fi
 # Which proxy is live is detected rather than assumed, so this script works
 # before, during and after the nginx -> Traefik conversion, and keeps working
 # if cutover.sh has to roll back.
-if docker ps --format '{{.Names}}' | grep -qx traefik; then
+#
+# "Is the Traefik container up" is the wrong question: Traefik runs staged on
+# 8070/8453 for weeks before it owns the public ports, and answering yes there
+# reconfigures a proxy nobody is talking to while nginx keeps pointing at the
+# container this deploy is about to stop. The question is who holds 443.
+live_proxy() {
+    local holders
+    holders=$(ss -ltnp 2>/dev/null | awk '$4 ~ /:443$/')
+    case "$holders" in
+        *'"traefik"'*) echo traefik; return ;;
+        *'"nginx"'*)   echo nginx;   return ;;
+    esac
+    # Nothing on 443 at all — a proxy is down mid-cutover. Fall back to
+    # whichever one exists so the deploy can still place its config.
+    if docker ps --format '{{.Names}}' | grep -qx traefik; then
+        echo traefik
+    else
+        echo nginx
+    fi
+}
+
+# A 200 from /health through a proxy. The status code is checked rather than
+# leaning on `curl -f`, because -f treats a redirect as success and both
+# proxies answer plain HTTP for this host with a 301 to https — a probe that
+# landed on the wrong port used to pass without reaching a container at all.
+# -k because an expired cert should fail the uptime alarm, not roll back an
+# otherwise healthy deploy; --resolve is what gets the SNI and Host right.
+probe_health() {  # $1 = port
+    [ "$(curl -s -k -o /dev/null -w '%{http_code}' --max-time 5 \
+        --resolve "api.asteriashome.gr:$1:127.0.0.1" \
+        "https://api.asteriashome.gr:$1/health" 2>/dev/null)" = "200" ]
+}
+
+LIVE_PROXY=${LIVE_PROXY:-$(live_proxy)}
+log "Live proxy: $LIVE_PROXY"
+
+if [ "$LIVE_PROXY" = traefik ]; then
     log "Switching Traefik service to port $NEXT_PORT..."
     PREV_CONF=$(cat "$TRAEFIK_SERVICE_CONF" 2>/dev/null || true)
 
@@ -167,12 +203,19 @@ EOF
     # on write. A malformed file is rejected in-process and Traefik keeps
     # serving the previous config, so the check is to confirm the new port is
     # actually being served rather than to validate syntax.
+    #
+    # Probed on the port Traefik really serves: 443 once it owns the public
+    # ports, its staging port while the cutover is still pending.
+    TRAEFIK_HTTPS_PORT=${TRAEFIK_HTTPS_PORT:-8453}
+    if ss -ltnp 2>/dev/null | awk '$4 ~ /:443$/' | grep -q '"traefik"'; then
+        TRAEFIK_HTTPS_PORT=443
+    fi
+
     SWITCHED=false
     for i in $(seq 1 15); do
-        if curl -sf --max-time 5 -H "Host: api.asteriashome.gr" \
-            "http://127.0.0.1/health" >/dev/null 2>&1; then
+        if probe_health "$TRAEFIK_HTTPS_PORT"; then
             SWITCHED=true
-            log "Traefik serving $NEXT (attempt $i)"
+            log "Traefik serving $NEXT on :$TRAEFIK_HTTPS_PORT (attempt $i)"
             break
         fi
         sleep 2
@@ -206,6 +249,29 @@ EOF
 
     nginx -s reload
     log "nginx reloaded"
+
+    # `nginx -t` only says the file parses; it says nothing about anything
+    # listening on $NEXT_PORT. Without this probe a cutover to a container
+    # that never came up leaves the whole public API answering 502.
+    SWITCHED=false
+    for i in $(seq 1 15); do
+        if probe_health 443; then
+            SWITCHED=true
+            log "nginx serving $NEXT on :$NEXT_PORT (attempt $i)"
+            break
+        fi
+        sleep 2
+    done
+
+    if [ "$SWITCHED" = false ]; then
+        log "ERROR: nginx is not serving $NEXT — restoring previous upstream"
+        if [ -n "$PREV_CONF" ]; then
+            printf '%s\n' "$PREV_CONF" > "$UPSTREAM_CONF"
+            nginx -t && nginx -s reload
+        fi
+        docker compose --profile "$NEXT" down 2>/dev/null || true
+        exit 1
+    fi
 fi
 
 echo "$NEXT" > "$STATE_FILE"

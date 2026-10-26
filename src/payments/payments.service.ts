@@ -1,4 +1,5 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Inject, Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { STRIPE_CLIENT, StripeClient } from '../stripe/stripe.module';
 import { ClientSession, Connection, Model } from 'mongoose';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Room, RoomSchema } from '../models/room.model';
@@ -17,14 +18,36 @@ import {
   submitNote,
 } from './checkout-copy';
 import { CreateCashBookingDto } from './dto/create-cash-booking.dto';
+import { CreatePaymentIntentDto } from './dto/create-payment-intent.dto';
+import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
+import { ConfirmPaymentDto } from './dto/confirm-payment.dto';
+import { BookingNumberService } from '../common/booking-number/booking-number.service';
+import { SettingsService } from '../settings/settings.service';
+import { EmailService } from '../email/email.service';
+import { BOOKING_STATUS, CURRENCY, PAYMENT_METHOD, PAYMENT_STATUS } from '../common/enums';
 
-/** Sites the Stripe page may send the guest back to. */
-const RETURN_ORIGINS = [
-  'https://asteriashome.gr',
-  'https://www.asteriashome.gr',
-  'http://localhost:3000',
-  'http://localhost:3001',
-];
+/**
+ * Sites the Stripe page may send the guest back to.
+ *
+ * Driven by RETURN_ORIGINS, falling back to CORS_ORIGINS — "which origins are
+ * ours" is one question and should have one answer. This was a hardcoded array
+ * that included the two localhost origins in production as well, which is the
+ * same class of bug that was fixed for CORS in main.ts: a page able to get the
+ * browser to a localhost origin was a trusted return destination for a live
+ * payment.
+ */
+function returnOrigins(): string[] {
+  const configured = (process.env.RETURN_ORIGINS || process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  if (configured.length) return configured;
+
+  return process.env.NODE_ENV === 'production'
+    ? ['https://asteriashome.gr', 'https://www.asteriashome.gr']
+    : ['http://localhost:3000', 'http://localhost:3001'];
+}
 
 /** Stripe metadata values are capped at 500 characters; longer notes span keys. */
 const META_CHUNK = 500;
@@ -41,32 +64,29 @@ export class PaymentsService {
    */
   private readonly bookingInFlight = new Map<string, Promise<any>>();
 
+  private readonly logger = new Logger(PaymentsService.name);
+
   constructor(
-    @InjectModel('Room') private roomModel: Model<Room>,
-    @InjectModel('Booking') private bookingModel: Model<Booking>,
+    @InjectModel(Room.name) private roomModel: Model<Room>,
+    @InjectModel(Booking.name) private bookingModel: Model<Booking>,
     @InjectConnection() private connection: Connection,
     private pricingService: PricingService,
     private readonly availability: AvailabilityEngine,
+    private readonly bookingNumbers: BookingNumberService,
+    private readonly settingsService: SettingsService,
+    @Inject(STRIPE_CLIENT) stripe: StripeClient,
   ) {
-    this.stripe = process.env.STRIPE_SECRET_KEY
-      ? new Stripe(process.env.STRIPE_SECRET_KEY)
-      : null;
+    // The client is injected rather than constructed here. There were three
+    // independent Stripe clients in the codebase — this one, one in
+    // AdminService, and one in HealthController with an 'sk_test_dummy'
+    // fallback — with no shared configuration and no pinned API version.
+    this.stripe = stripe;
   }
 
-  async createPaymentIntent(createPaymentIntentDto: any) {
-    if (!this.stripe) {
-      throw new HttpException('Stripe is not configured. Please set STRIPE_SECRET_KEY in your environment variables.', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+  async createPaymentIntent(createPaymentIntentDto: CreatePaymentIntentDto) {
+    this.requireStripe();
 
-    const {
-      roomId,
-      checkIn,
-      checkOut,
-      adults,
-      children = 0,
-      currency = 'eur',
-      offerId
-    } = createPaymentIntentDto;
+    const { roomId, checkIn, checkOut, adults, children = 0, offerId } = createPaymentIntentDto;
 
     // Check if room exists
     const room = await this.roomModel.findById(roomId);
@@ -74,15 +94,22 @@ export class PaymentsService {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
 
+    await this.assertWithinBookingWindow(checkIn, checkOut);
+
     // Quick check; the atomic one runs inside the booking transaction.
     await this.availability.assertSellable(roomId, new Date(checkIn), new Date(checkOut));
 
     const priced = await this.priceStay(room, checkIn, checkOut, adults, children, offerId);
 
-    // Create payment intent
+    // The currency is fixed, not taken from the request.
+    //
+    // This route is public, and `currency` used to be an unvalidated optional
+    // string on the DTO that was passed straight through here. The amount is
+    // computed by PricingService in euro cents, so a caller who sent a cheaper
+    // unit was charged the euro figure in it.
     const paymentIntent = await this.stripe.paymentIntents.create({
       amount: priced.amountCents,
-      currency: currency,
+      currency: CURRENCY,
       automatic_payment_methods: {
         enabled: true,
       },
@@ -93,7 +120,7 @@ export class PaymentsService {
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
       amount: priced.amountCents / 100,
-      currency: currency,
+      currency: CURRENCY,
       appliedOffer: priced.appliedOffer,
       originalPrice: priced.basePrice,
       discountAmount: priced.discountAmount,
@@ -110,7 +137,7 @@ export class PaymentsService {
    * session metadata, so the booking can be created from the session alone:
    * by the return page, or by the webhook when the guest never comes back.
    */
-  async createCheckoutSession(dto: any, origin?: string) {
+  async createCheckoutSession(dto: CreateCheckoutSessionDto, origin?: string) {
     this.requireStripe();
 
     const { roomId, checkIn, checkOut, adults, children = 0, guestInfo, specialRequests, offerId } = dto;
@@ -121,6 +148,7 @@ export class PaymentsService {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
 
+    await this.assertWithinBookingWindow(checkIn, checkOut);
     await this.availability.assertSellable(roomId, new Date(checkIn), new Date(checkOut));
 
     const priced = await this.priceStay(room, checkIn, checkOut, adults, children, offerId);
@@ -141,7 +169,7 @@ export class PaymentsService {
     }
 
     // Back to the same booking page, so the summary can be rebuilt from the URL.
-    const base = RETURN_ORIGINS.includes(origin)
+    const base = returnOrigins().includes(origin)
       ? origin
       : (process.env.FRONTEND_URL || SITE_URL).replace(/\/$/, '');
     const stay = new URLSearchParams({
@@ -165,7 +193,7 @@ export class PaymentsService {
         {
           quantity: 1,
           price_data: {
-            currency: 'eur',
+            currency: CURRENCY,
             unit_amount: priced.amountCents,
             product_data: {
               name: roomName,
@@ -209,7 +237,7 @@ export class PaymentsService {
       // branding or the photo, open the plain page instead.
       const param: string = error?.param || '';
       if (!param.startsWith('branding_settings') && !param.includes('images')) throw error;
-      console.error(`Stripe rejected ${param} on checkout, retrying without it:`, error.message);
+      this.logger.warn(`Stripe rejected ${param} on checkout, retrying without it: ${error.message}`);
       const { branding_settings, ...plain } = params;
       delete plain.line_items[0].price_data.product_data.images;
       session = await this.stripe.checkout.sessions.create(plain);
@@ -239,9 +267,15 @@ export class PaymentsService {
       if (!(error instanceof HttpException)) throw error;
       // Paid, but the stay cannot be booked. 409 tells the page to show the
       // guest our contact details instead of a retry.
-      console.error(
+      // The most important log line in the system: a guest has been charged
+      // and has no room. It went to console.error with no level and no
+      // structure, so it was indistinguishable from ordinary noise in
+      // `docker logs`. Logger.error at least carries a level and a context
+      // that a log shipper can filter on.
+      this.logger.error(
         `PAID BUT NOT BOOKED: Stripe session ${session.id}, payment ${session.payment_intent}, ` +
           `${session.metadata?.guestEmail}: ${error.message}`,
+        error instanceof Error ? error.stack : undefined,
       );
       throw new HttpException(error.message, HttpStatus.CONFLICT);
     }
@@ -295,9 +329,10 @@ export class PaymentsService {
       // will not fix itself on retry; the owner has to sort it out with the guest.
       // Anything else (database down) is thrown so Stripe retries.
       if (error instanceof HttpException) {
-        console.error(
+        this.logger.error(
           `PAID BUT NOT BOOKED: Stripe session ${session.id}, payment ${session.payment_intent}, ` +
             `${session.metadata?.guestEmail}: ${error.message}`,
+          error instanceof Error ? error.stack : undefined,
         );
         return { received: true };
       }
@@ -307,7 +342,7 @@ export class PaymentsService {
     return { received: true };
   }
 
-  async confirmPayment(confirmPaymentDto: any) {
+  async confirmPayment(confirmPaymentDto: ConfirmPaymentDto) {
     this.requireStripe();
 
     const { paymentIntentId, guestInfo, specialRequests } = confirmPaymentDto;
@@ -398,17 +433,27 @@ export class PaymentsService {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
     }
 
-    // Idempotency: if a booking for this payment intent already exists, return it
+    // Idempotency, first attempt: a read. Cheap, and it handles the common case
+    // where the webhook arrives well after the return page. It is NOT the
+    // guarantee — it is a read-then-write race, and it runs outside the
+    // transaction below. The guarantee is the unique index on
+    // stripePaymentIntentId, caught as E11000 after the insert.
     const existing = await this.bookingModel.findOne({ stripePaymentIntentId: paymentIntentId });
     if (existing) {
       return { message: 'Payment confirmed and booking created successfully', booking: existing };
     }
 
-    const bookingNumber = await this.generateBookingNumber();
     const session = await this.connection.startSession();
     let booking: any;
     try {
       await session.withTransaction(async () => {
+        // withTransaction may retry after another instance committed the same
+        // payment. Resolve that before testing availability of its occupied room.
+        const winner = await this.bookingModel.findOne({ stripePaymentIntentId: paymentIntentId }).session(session);
+        if (winner) {
+          booking = winner;
+          return;
+        }
         await this.availability.assertSellable(
           roomId,
           new Date(checkIn),
@@ -432,14 +477,25 @@ export class PaymentsService {
           vatAmount: num(vatAmount),
           municipalFee: num(municipalFee),
           environmentalTax: num(environmentalTax),
-          paymentMethod: 'CARD',
-          paymentStatus: 'PAID',
-          bookingStatus: 'CONFIRMED',
+          paymentMethod: PAYMENT_METHOD.CARD,
+          paymentStatus: PAYMENT_STATUS.PAID,
+          bookingStatus: BOOKING_STATUS.CONFIRMED,
           stripePaymentIntentId: paymentIntentId,
-          bookingNumber,
+          bookingNumber: await this.bookingNumbers.next(session),
         });
         await booking.save({ session });
       });
+    } catch (error) {
+      // Another process got there first. During a blue/green cutover two
+      // containers are alive at once: both miss the findOne above, both pass
+      // assertSellable in separate sessions, and both insert. The unique index
+      // fails the second one, and the booking the winner created is the right
+      // answer for this caller too.
+      const duplicate = await this.handleDuplicateBooking(error, paymentIntentId);
+      if (duplicate) {
+        return { message: 'Payment confirmed and booking created successfully', booking: duplicate };
+      }
+      throw error;
     } finally {
       await session.endSession();
     }
@@ -448,6 +504,36 @@ export class PaymentsService {
       message: 'Payment confirmed and booking created successfully',
       booking,
     };
+  }
+
+  /**
+   * Resolves a failed insert that was a duplicate payment into the booking that
+   * already exists for it. Returns null when the error was something else, so
+   * the caller rethrows.
+   *
+   * This is what makes the in-process `bookingInFlight` map an optimisation
+   * rather than the guarantee it used to be.
+   */
+  private async handleDuplicateBooking(error: unknown, paymentIntentId: string) {
+    const isDuplicateKey =
+      (error as any)?.code === 11000 ||
+      (error as any)?.cause?.code === 11000 ||
+      /E11000/.test(String((error as any)?.message ?? ''));
+
+    if (!isDuplicateKey) return null;
+
+    const winner = await this.bookingModel.findOne({ stripePaymentIntentId: paymentIntentId });
+    if (winner) {
+      this.logger.warn(
+        `Duplicate booking insert for payment ${paymentIntentId} rejected by the unique index; ` +
+          `returning the existing booking`,
+      );
+      return winner;
+    }
+
+    // A duplicate key on some other unique field — bookingNumber, most likely.
+    // That is a real failure and must not be reported as a successful booking.
+    return null;
   }
 
   /**
@@ -529,6 +615,24 @@ export class PaymentsService {
     }
   }
 
+  /**
+   * Applies the property's advance-booking window to a guest-initiated stay.
+   *
+   * `minAdvanceBooking` and `maxAdvanceBooking` were settings the owner could
+   * change in the admin panel that nothing read — SettingsService even had
+   * validateBookingRules() written for exactly this, with zero callers.
+   *
+   * Only called on guest paths. An admin recording a walk-in is booking for
+   * tonight by definition, so holding them to a minimum notice period would
+   * stop the owner from entering a booking that has already happened.
+   */
+  private async assertWithinBookingWindow(checkIn: string, checkOut: string) {
+    const { valid, errors } = await this.settingsService.validateBookingRules(checkIn, checkOut);
+    if (!valid) {
+      throw new HttpException(errors.join('. '), HttpStatus.BAD_REQUEST);
+    }
+  }
+
   async createCashBooking(
     createCashBookingDto: CreateCashBookingDto,
     options: { isAdmin: boolean } = { isAdmin: true },
@@ -539,6 +643,12 @@ export class PaymentsService {
     const room = await this.roomModel.findById(roomId);
     if (!room) {
       throw new HttpException('Room not found', HttpStatus.NOT_FOUND);
+    }
+
+    // The advance-booking window applies to guests only: an admin recording a
+    // walk-in is booking for tonight, which a minimum notice period forbids.
+    if (!isAdmin) {
+      await this.assertWithinBookingWindow(checkIn, checkOut);
     }
 
     // Price the stay server-side either way: an omitted amount must fall back to
@@ -568,7 +678,7 @@ export class PaymentsService {
           }
         : {};
 
-    const bookingNumber = await this.generateBookingNumber();
+    const bookingNumber = await this.bookingNumbers.next();
     const session = await this.connection.startSession();
     let booking: any;
     try {
@@ -589,12 +699,12 @@ export class PaymentsService {
           children: Number(children) || 0,
           totalAmount: resolvedTotal,
           ...breakdown,
-          paymentMethod: 'CASH',
-          paymentStatus: 'PENDING',
+          paymentMethod: PAYMENT_METHOD.CASH,
+          paymentStatus: PAYMENT_STATUS.PENDING,
           // A guest asking to pay cash has handed over no money, so the room is
           // not held until the property confirms. Otherwise anyone could block
           // the whole property for free.
-          bookingStatus: isAdmin ? 'CONFIRMED' : 'PENDING',
+          bookingStatus: isAdmin ? BOOKING_STATUS.CONFIRMED : BOOKING_STATUS.PENDING,
           awaitingPropertyConfirmation: !isAdmin,
           bookingNumber,
           depositAmount: isAdmin && depositAmount != null ? Number(depositAmount) : 0,
@@ -633,16 +743,7 @@ export class PaymentsService {
     };
   }
 
-  private async generateBookingNumber(): Promise<string> {
-    const year = new Date().getFullYear();
-    const counter = await this.bookingModel.db
-      .collection('counters')
-      .findOneAndUpdate(
-        { _id: `booking:${year}` as any },
-        { $inc: { seq: 1 } },
-        { upsert: true, returnDocument: 'after' },
-      );
-    return `AST-${year}-${String(counter.seq).padStart(3, '0')}`;
-  }
-
+  // generateBookingNumber() is gone. It was duplicated byte for byte in
+  // CalendarBookingsRepository, and both reached past Mongoose into a raw
+  // `counters` collection with no model or schema. BookingNumberService owns it.
 }

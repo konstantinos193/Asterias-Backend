@@ -126,11 +126,19 @@ test('registration rejects a short password', async () => {
   assert.deepStrictEqual(errors.map((e) => e.property), ['password']);
 });
 
-test('AuthService pins the role to USER regardless of input', () => {
-  // Second layer, in case a future DTO change lets `role` back through.
+test('AuthService pins the role to USER regardless of input', async () => {
   const { AuthService } = require(path.join(DIST, 'auth/auth.service'));
-  const source = AuthService.prototype.register.toString();
-  assert.match(source, /role:\s*'USER'/, 'register() must force role USER');
+  let saved;
+  class UserModel {
+    constructor(data) { Object.assign(this, data); }
+    static async findOne() { return null; }
+    async save() { saved = this; }
+  }
+  const service = new AuthService(UserModel, {}, {});
+  service.login = async user => user;
+  await service.register({ email: 'guest@example.com', role: 'ADMIN', isActive: false });
+  assert.equal(saved.role, 'USER');
+  assert.equal(saved.isActive, true);
 });
 
 test('ThrottlerGuard is bound as a global guard', () => {

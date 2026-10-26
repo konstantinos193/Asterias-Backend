@@ -1,4 +1,5 @@
-import { Controller, Get, Param, Put, UseGuards, Request, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Public, Authenticated } from '../auth/decorators/access.decorator';
+import { Controller, Get, Param, UseGuards, Request, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -15,6 +16,7 @@ export class UsersController {
   // an administrator. Accounts are created through POST /api/auth/register
   // (always role USER) or by seed/CLI for admins.
 
+  @Authenticated()
   @Get(':id')
   @ApiOperation({ summary: 'Get user by ID (self, or any user for admins)' })
   @ApiResponse({ status: 200, description: 'User found' })
@@ -32,18 +34,8 @@ export class UsersController {
     return profile;
   }
 
-  @Put(':id/last-login')
-  @ApiOperation({ summary: 'Update last login for the signed-in user' })
-  @ApiResponse({ status: 200, description: 'Last login updated' })
-  async updateLastLogin(@Param('id', MongoObjectIdPipe) id: string, @Request() req) {
-    if (req.user.role !== 'ADMIN' && String(req.user._id) !== id) {
-      throw new ForbiddenException('You may only update your own account');
-    }
-
-    const user = await this.usersService.updateLastLogin(id);
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-    return this.usersService.getPublicProfile(id);
-  }
+  // PUT /api/users/:id/last-login is gone. `lastLogin` is server state and is
+  // now written by AuthService.login(). The route made it client-reported: the
+  // frontend had to remember to call it, so a client that did not call it
+  // showed no logins, and any client could post any value.
 }

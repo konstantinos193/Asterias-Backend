@@ -131,7 +131,9 @@ export function dayKey(d: Date | string): string {
 
 /** True for a real calendar date in YYYY-MM-DD form (rejects 2026-02-30). */
 export function isDayKey(s: unknown): s is string {
-  return typeof s === 'string' && DAY_RE.test(s) && dayKey(`${s}T00:00:00.000Z`) === s;
+  if (typeof s !== 'string' || !DAY_RE.test(s)) return false;
+  const date = new Date(s + 'T00:00:00.000Z');
+  return Number.isFinite(date.getTime()) && dayKey(date) === s;
 }
 
 export function addDays(day: string, n: number): string {

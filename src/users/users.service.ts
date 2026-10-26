@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User, UserDocument, UserModel } from '../models/user.model';
+import { USER_ROLE } from '../common/enums';
 
 @Injectable()
 export class UsersService {
@@ -21,13 +22,12 @@ export class UsersService {
    * UserModel.createAdmin.
    */
   async create(userData: Partial<User>): Promise<UserDocument> {
-    const user = new this.userModel({ ...userData, role: 'USER' });
+    const user = new this.userModel({ ...userData, role: USER_ROLE.USER });
     return user.save();
   }
 
-  async updateLastLogin(id: string): Promise<UserDocument | null> {
-    return this.userModel.findByIdAndUpdate(id, { lastLogin: new Date() }, { new: true });
-  }
+  // updateLastLogin() is gone, along with the route that called it.
+  // AuthService.login() records it where the login actually happens.
 
   async getPublicProfile(id: string): Promise<any> {
     const user = await this.findById(id);

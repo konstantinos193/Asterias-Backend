@@ -1,73 +1,97 @@
-import { Controller, Post, Body, HttpException, HttpStatus, Get, Param, Res, Req, Headers, HttpCode, UseGuards, RawBodyRequest } from '@nestjs/common';
+import { Public, Authenticated } from '../auth/decorators/access.decorator';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  Param,
+  Req,
+  Headers,
+  HttpCode,
+  UseGuards,
+  RawBodyRequest,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentIntentDto } from './dto/create-payment-intent.dto';
 import { ConfirmPaymentDto } from './dto/confirm-payment.dto';
 import { CreateCheckoutSessionDto, ConfirmCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { CreateCashBookingDto, RequestCashBookingDto } from './dto/create-cash-booking.dto';
-import { Request, Response } from 'express';
+import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
-import { RequireAdmin } from '../auth/decorators/require-admin.decorator';
 
+/**
+ * Every handler here used to wrap its service call in try/catch and rethrow.
+ * Six of the seven flattened the error: a NotFoundException('Room not found')
+ * from the service came back as a 500 with `{ error: 'Room not found' }`, and a
+ * ConflictException from the duplicate-booking path came back as a 500 too, so
+ * the booking wizard could not distinguish "that room just went" from "the
+ * server is broken" and showed the generic failure for both.
+ *
+ * common/filters/http-exception.filter.ts does this correctly for every route,
+ * including translating Stripe's own refusals, so the handlers let exceptions
+ * through.
+ */
+@ApiTags('payments')
 @Controller('payments')
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
+  @Public()
   @Throttle({ default: { limit: 10, ttl: 60000 }, strict: { limit: 50, ttl: 900000 } })
   @Post('create-payment-intent')
-  async createPaymentIntent(@Body() createPaymentIntentDto: CreatePaymentIntentDto, @Res() res: Response) {
-    try {
-      const result = await this.paymentsService.createPaymentIntent(createPaymentIntentDto);
-      return res.status(201).json(result);
-    } catch (error: any) {
-      return res.status(error.status || 500).json({ error: error.message || 'Failed to create payment intent' });
-    }
+  @HttpCode(201)
+  @ApiOperation({ summary: 'Create a Stripe PaymentIntent for a stay' })
+  createPaymentIntent(@Body() createPaymentIntentDto: CreatePaymentIntentDto) {
+    // No @Res() here any more.
+    //
+    // This handler used @Res() to send a plain JSON body, which opts the route
+    // out of Nest's response pipeline entirely — so it was the one payments
+    // route whose success response was NOT wrapped by TransformInterceptor,
+    // while every other one was. The frontend therefore had to read this
+    // response at the root and its siblings under `.data`. It also meant
+    // thrown exceptions could not reach the global filter.
+    return this.paymentsService.createPaymentIntent(createPaymentIntentDto);
   }
 
   /** Stripe-hosted payment page for a stay. Returns the URL to send the guest to. */
+  @Public()
   @Throttle({ default: { limit: 10, ttl: 60000 }, strict: { limit: 50, ttl: 900000 } })
   @Post('create-checkout-session')
-  async createCheckoutSession(@Body() dto: CreateCheckoutSessionDto, @Headers('origin') origin?: string) {
-    try {
-      return await this.paymentsService.createCheckoutSession(dto, origin);
-    } catch (error: any) {
-      throw new HttpException(
-        { error: error.message || 'Failed to start payment' },
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Start a Stripe-hosted checkout for a stay' })
+  createCheckoutSession(
+    @Body() dto: CreateCheckoutSessionDto,
+    @Headers('origin') origin?: string,
+  ) {
+    return this.paymentsService.createCheckoutSession(dto, origin);
   }
 
+  @Public()
   @Post('confirm-checkout-session')
-  async confirmCheckoutSession(@Body() dto: ConfirmCheckoutSessionDto) {
-    try {
-      return await this.paymentsService.confirmCheckoutSession(dto.sessionId);
-    } catch (error: any) {
-      throw new HttpException(
-        { error: error.message || 'Failed to confirm payment' },
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Turn a completed Stripe session into a booking' })
+  confirmCheckoutSession(@Body() dto: ConfirmCheckoutSessionDto) {
+    return this.paymentsService.confirmCheckoutSession(dto.sessionId);
   }
 
   /** Books paid stays whose guest never made it back from the Stripe page. */
+  @Public()
   @Post('stripe-webhook')
   @HttpCode(200)
-  async stripeWebhook(@Req() req: RawBodyRequest<Request>, @Headers('stripe-signature') signature?: string) {
+  @ApiOperation({ summary: 'Stripe webhook (signature verified over the raw body)' })
+  stripeWebhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('stripe-signature') signature?: string,
+  ) {
     return this.paymentsService.handleStripeWebhook(req.rawBody, signature);
   }
 
+  @Public()
   @Post('confirm-payment')
-  async confirmPayment(@Body() confirmPaymentDto: ConfirmPaymentDto) {
-    try {
-      return await this.paymentsService.confirmPayment(confirmPaymentDto);
-    } catch (error: any) {
-      throw new HttpException(
-        { error: error.message || 'Failed to confirm payment' },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Turn a succeeded PaymentIntent into a booking' })
+  confirmPayment(@Body() confirmPaymentDto: ConfirmPaymentDto) {
+    return this.paymentsService.confirmPayment(confirmPaymentDto);
   }
 
   /**
@@ -76,19 +100,10 @@ export class PaymentsController {
    */
   @Post('create-cash-booking')
   @UseGuards(JwtAuthGuard, AdminGuard)
-  @RequireAdmin()
-  async createCashBooking(@Body() createCashBookingDto: CreateCashBookingDto) {
-    try {
-      return await this.paymentsService.createCashBooking(createCashBookingDto, { isAdmin: true });
-    } catch (error: any) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new HttpException(
-        { error: error.message || 'Failed to create cash booking' },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create a cash booking as the owner (admin)' })
+  createCashBooking(@Body() createCashBookingDto: CreateCashBookingDto) {
+    return this.paymentsService.createCashBooking(createCashBookingDto, { isAdmin: true });
   }
 
   /**
@@ -100,34 +115,21 @@ export class PaymentsController {
    * stay is recorded as PENDING and the property confirms it; the price is
    * computed server-side and the DTO refuses a caller-supplied total.
    */
+  @Public()
   @Post('request-cash-booking')
   @Throttle({ default: { limit: 3, ttl: 60000 }, strict: { limit: 3, ttl: 900000 } })
-  async requestCashBooking(@Body() requestCashBookingDto: RequestCashBookingDto) {
-    try {
-      return await this.paymentsService.createCashBooking(
-        requestCashBookingDto as CreateCashBookingDto,
-        { isAdmin: false },
-      );
-    } catch (error: any) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new HttpException(
-        { error: error.message || 'Failed to request cash booking' },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Request to pay on arrival (public)' })
+  requestCashBooking(@Body() requestCashBookingDto: RequestCashBookingDto) {
+    return this.paymentsService.createCashBooking(
+      requestCashBookingDto as CreateCashBookingDto,
+      { isAdmin: false },
+    );
   }
 
+  @Public()
   @Get('status/:paymentIntentId')
-  async getPaymentStatus(@Param('paymentIntentId') paymentIntentId: string) {
-    try {
-      return await this.paymentsService.getPaymentStatus(paymentIntentId);
-    } catch (error: any) {
-      throw new HttpException(
-        { error: error.message || 'Failed to get payment status' },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  @ApiOperation({ summary: 'Status of a PaymentIntent' })
+  getPaymentStatus(@Param('paymentIntentId') paymentIntentId: string) {
+    return this.paymentsService.getPaymentStatus(paymentIntentId);
   }
 }

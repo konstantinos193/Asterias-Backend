@@ -1,6 +1,5 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ALLOW_NON_ADMIN_KEY } from '../decorators/require-admin.decorator';
 
 /**
  * Fail-closed: if this guard is on the route, the caller must be an admin.
@@ -16,7 +15,7 @@ export class AdminGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const allowNonAdmin = this.reflector.getAllAndOverride<boolean>(ALLOW_NON_ADMIN_KEY, [
+    const allowNonAdmin = this.reflector.getAllAndOverride<boolean>('allowNonAdmin', [
       context.getHandler(),
       context.getClass(),
     ]);

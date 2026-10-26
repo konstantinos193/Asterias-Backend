@@ -4,13 +4,14 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Booking, BookingDocument } from '../models/booking.model';
 import { Room, RoomDocument } from '../models/room.model';
 import { stayNights } from '../availability/availability-rules';
-import puppeteer from 'puppeteer';
+import { BrowserPoolService } from './browser-pool.service';
 
 @Injectable()
 export class PdfService {
   constructor(
-    @InjectModel('Booking') private bookingModel: Model<BookingDocument>,
-    @InjectModel('Room') private roomModel: Model<RoomDocument>,
+    @InjectModel(Booking.name) private bookingModel: Model<BookingDocument>,
+    @InjectModel(Room.name) private roomModel: Model<RoomDocument>,
+    private readonly browserPool: BrowserPoolService,
   ) {}
 
   /**
@@ -41,18 +42,12 @@ export class PdfService {
     
     // Generate HTML for the PDF
     const html = this.generateBookingConfirmationHtml(booking, room);
-    
-    // Launch Puppeteer
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    
-    try {
-      const page = await browser.newPage();
+
+    // One shared browser with a concurrency limit — see BrowserPoolService.
+    // This used to launch and close a whole Chromium per request.
+    return this.browserPool.withPage(async (page) => {
       await page.setContent(html, { waitUntil: 'load' });
-      
-      // Generate PDF
+
       const pdfBuffer = await page.pdf({
         format: 'A4',
         printBackground: true,
@@ -63,11 +58,9 @@ export class PdfService {
           left: '20mm',
         },
       });
-      
+
       return Buffer.from(pdfBuffer);
-    } finally {
-      await browser.close();
-    }
+    });
   }
 
   private generateBookingConfirmationHtml(booking: BookingDocument, room: any): string {
@@ -242,27 +235,27 @@ export class PdfService {
       <body>
         <div class="header">
           <h1>${t.title}</h1>
-          <p><strong>${t.bookingNumber}:</strong> ${booking.bookingNumber}</p>
+          <p><strong>${t.bookingNumber}:</strong> ${escapeHtml(booking.bookingNumber)}</p>
         </div>
 
         <div class="section">
           <h2>${t.guestInfo}</h2>
           <div class="row">
             <span class="label">${t.guestInfo}:</span>
-            <span class="value">${booking.guestInfo.firstName} ${booking.guestInfo.lastName}</span>
+            <span class="value">${escapeHtml(booking.guestInfo.firstName)} ${escapeHtml(booking.guestInfo.lastName)}</span>
           </div>
           <div class="row">
             <span class="label">Email:</span>
-            <span class="value">${booking.guestInfo.email}</span>
+            <span class="value">${escapeHtml(booking.guestInfo.email)}</span>
           </div>
           <div class="row">
             <span class="label">Phone:</span>
-            <span class="value">${booking.guestInfo.phone}</span>
+            <span class="value">${escapeHtml(booking.guestInfo.phone)}</span>
           </div>
           ${booking.guestInfo.specialRequests ? `
           <div class="row">
             <span class="label">${t.specialRequests}:</span>
-            <span class="value">${booking.guestInfo.specialRequests}</span>
+            <span class="value">${escapeHtml(booking.guestInfo.specialRequests)}</span>
           </div>
           ` : ''}
         </div>
@@ -271,11 +264,11 @@ export class PdfService {
           <h2>${t.roomDetails}</h2>
           <div class="row">
             <span class="label">${t.roomType}:</span>
-            <span class="value">${room.name}</span>
+            <span class="value">${escapeHtml(room.name)}</span>
           </div>
           <div class="row">
             <span class="label">Description:</span>
-            <span class="value">${room.description}</span>
+            <span class="value">${escapeHtml(room.description)}</span>
           </div>
           <div class="row">
             <span class="label">Capacity:</span>
@@ -312,7 +305,7 @@ export class PdfService {
           <div class="row">
             <span class="label">${t.paymentStatus}:</span>
             <span class="value ${booking.paymentStatus === 'PAID' ? 'status-paid' : 'status-pending'}">
-              ${booking.paymentStatus}
+              ${escapeHtml(booking.paymentStatus)}
             </span>
           </div>
           <div class="row total">
@@ -331,4 +324,8 @@ export class PdfService {
       </html>
     `;
   }
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 }

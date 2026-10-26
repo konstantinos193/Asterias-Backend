@@ -1,16 +1,13 @@
+import { PersistenceModule } from '../database/persistence.module';
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { BookingComWebhookController } from './bookingcom-webhook.controller';
 import { BookingComWebhookService } from './bookingcom-webhook.service';
-import { Room, RoomSchema } from '../models/room.model';
-import { Booking, BookingSchema } from '../models/booking.model';
+import { BookingNumberModule } from '../common/booking-number/booking-number.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: Room.name, schema: RoomSchema },
-      { name: Booking.name, schema: BookingSchema }
-    ])
+    PersistenceModule,
+    BookingNumberModule,
   ],
   controllers: [BookingComWebhookController],
   providers: [BookingComWebhookService],

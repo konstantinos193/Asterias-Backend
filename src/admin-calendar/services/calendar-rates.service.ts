@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { bumpAvailabilityRevision } from '../../availability/availability-revision';
 import { buildDates, nightsBetween } from '../../availability/availability-rules';
 import { PricingService, RateCalendar } from '../../pricing/pricing.service';
 import { MAX_GRID_NIGHTS } from '../calendar.constants';
@@ -38,7 +37,6 @@ export class CalendarRatesService {
 
     // Prices do not change availability, but the calendar watches one counter
     // for "something moved", and a new rate has to reach the other open tabs.
-    bumpAvailabilityRevision();
 
     return this.pricing.rateCalendar(dto.from, nights);
   }

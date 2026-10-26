@@ -1,114 +1,136 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNumber, IsDate, IsOptional, IsEnum, IsObject, IsBoolean, Min, IsNotEmpty, MaxLength, Validate, ValidatorConstraint, ValidatorConstraintInterface, ValidationArguments } from 'class-validator';
+import {
+  IsString,
+  IsNumber,
+  IsInt,
+  IsDate,
+  IsOptional,
+  IsIn,
+  IsMongoId,
+  IsObject,
+  IsBoolean,
+  Min,
+  Max,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
-
-@ValidatorConstraint({ name: 'isAfterCheckIn', async: false })
-class IsAfterCheckIn implements ValidatorConstraintInterface {
-  validate(checkOut: Date, args: ValidationArguments) {
-    const checkIn = (args.object as any).checkIn;
-    if (!checkIn || !checkOut) return true;
-    return new Date(checkOut) > new Date(checkIn);
-  }
-  defaultMessage() {
-    return 'checkOut must be after checkIn';
-  }
-}
+import { GuestInfoDto } from '../../payments/dto/confirm-payment.dto';
+import { IsAfterStayDate, IsStayDate } from '../../common/validators/stay-dates.validator';
+import { MAX_ADULTS_PER_BOOKING, MAX_CHILDREN_PER_BOOKING } from '../../common/limits';
+import {
+  BOOKING_SOURCES,
+  BOOKING_STATUSES,
+  BookingSource,
+  BookingStatus,
+  PAYMENT_METHODS,
+  PAYMENT_STATUSES,
+  PaymentMethod,
+  PaymentStatus,
+} from '../../common/enums';
 
 export class CreateBookingDto {
-  @ApiProperty()
+  /**
+   * Optional, and normally omitted: BookingsService issues the number from the
+   * shared counter. It is accepted only so an admin importing a historical
+   * booking can preserve its original reference.
+   */
+  @ApiProperty({ required: false, description: 'Server-generated unless given' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(50)
-  bookingNumber: string;
+  bookingNumber?: string;
 
   @ApiProperty()
-  @IsString()
-  @IsNotEmpty()
+  @IsMongoId()
   roomId: string;
 
-  @ApiProperty()
-  @IsString()
+  @ApiProperty({ required: false })
   @IsOptional()
+  @IsMongoId()
   userId?: string;
 
-  @ApiProperty()
+  // Was a bare @IsObject(), so nothing inside it was checked: a booking could
+  // be stored with no guest name and an unparseable email address.
+  @ApiProperty({ type: GuestInfoDto })
   @IsObject()
-  @IsNotEmpty()
-  guestInfo: {
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone: string;
-    specialRequests?: string;
-    language?: 'el' | 'en' | 'de';
-  };
+  @ValidateNested()
+  @Type(() => GuestInfoDto)
+  guestInfo: GuestInfoDto;
 
-  @ApiProperty()
-  @IsDate()
-  @Type(() => Date)
-  @IsNotEmpty()
-  checkIn: Date;
+  @ApiProperty({ example: '2026-07-04', description: 'First night, YYYY-MM-DD' })
+  @IsStayDate()
+  checkIn: string;
 
-  @ApiProperty()
-  @IsDate()
-  @Type(() => Date)
-  @IsNotEmpty()
-  @Validate(IsAfterCheckIn)
-  checkOut: Date;
+  @ApiProperty({ example: '2026-07-07', description: 'Departure day, YYYY-MM-DD' })
+  @IsStayDate()
+  @IsAfterStayDate('checkIn')
+  checkOut: string;
 
-  @ApiProperty()
-  @IsNumber()
+  @ApiProperty({ minimum: 1, maximum: MAX_ADULTS_PER_BOOKING })
+  @Type(() => Number)
+  @IsInt()
   @Min(1)
-  @IsNotEmpty()
+  @Max(MAX_ADULTS_PER_BOOKING)
   adults: number;
 
-  @ApiProperty()
-  @IsNumber()
-  @Min(0)
+  @ApiProperty({ required: false, minimum: 0, maximum: MAX_CHILDREN_PER_BOOKING })
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(MAX_CHILDREN_PER_BOOKING)
   children?: number;
 
-  @ApiProperty()
+  /**
+   * An override for a negotiated price. Omitted — which is the normal case —
+   * the stay is priced by PricingService, exactly as it is at checkout. This
+   * used to be required, and was the only figure available: the route stored
+   * whatever arrived here without ever pricing the stay.
+   */
+  @ApiProperty({ required: false, description: 'Admin override; priced by the server if omitted' })
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  @IsNotEmpty()
-  totalAmount: number;
+  @Max(1000000)
+  totalAmount?: number;
 
-  @ApiProperty()
-  @IsEnum(['CARD', 'CASH'])
-  @IsNotEmpty()
-  paymentMethod: 'CARD' | 'CASH';
+  @ApiProperty({ enum: PAYMENT_METHODS })
+  @IsIn(PAYMENT_METHODS)
+  paymentMethod: PaymentMethod;
 
-  @ApiProperty()
-  @IsEnum(['PENDING', 'PAID', 'FAILED', 'REFUNDED'])
+  @ApiProperty({ required: false, enum: PAYMENT_STATUSES })
   @IsOptional()
-  paymentStatus?: 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
+  @IsIn(PAYMENT_STATUSES)
+  paymentStatus?: PaymentStatus;
 
-  @ApiProperty()
-  @IsEnum(['CONFIRMED', 'PENDING', 'CANCELLED', 'CHECKED_IN', 'CHECKED_OUT'])
+  @ApiProperty({ required: false, enum: BOOKING_STATUSES })
   @IsOptional()
-  bookingStatus?: 'CONFIRMED' | 'PENDING' | 'CANCELLED' | 'CHECKED_IN' | 'CHECKED_OUT';
+  @IsIn(BOOKING_STATUSES)
+  bookingStatus?: BookingStatus;
 
-  @ApiProperty()
+  @ApiProperty({ required: false })
+  @IsOptional()
   @IsString()
-  @IsOptional()
+  @MaxLength(255)
   stripePaymentIntentId?: string;
 
-  @ApiProperty()
-  @IsString()
+  @ApiProperty({ required: false })
   @IsOptional()
+  @IsString()
   @MaxLength(1000)
   notes?: string;
 
-  @ApiProperty()
-  @IsString()
+  @ApiProperty({ required: false })
   @IsOptional()
+  @IsString()
+  @MaxLength(255)
   bookingcom_booking_id?: string;
 
-  @ApiProperty()
-  @IsEnum(['asterias', 'bookingcom'])
+  @ApiProperty({ required: false, enum: BOOKING_SOURCES })
   @IsOptional()
-  source?: 'asterias' | 'bookingcom';
+  @IsIn(BOOKING_SOURCES)
+  source?: BookingSource;
 
   @ApiProperty({ required: false, default: 0 })
   @IsOptional()

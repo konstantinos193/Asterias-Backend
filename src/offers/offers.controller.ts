@@ -1,3 +1,4 @@
+import { Public, Authenticated } from '../auth/decorators/access.decorator';
 import {
   Controller,
   Get,
@@ -24,6 +25,7 @@ import { OptionalAuthGuard } from '../auth/guards/optional-auth.guard';
 export class OffersController {
   constructor(private readonly offersService: OffersService) {}
 
+  @Public()
   @Get()
   @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get all active offers (public)' })
@@ -33,6 +35,7 @@ export class OffersController {
     return { offers };
   }
 
+  @Public()
   @Get(':id')
   @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get single offer by ID (public)' })
@@ -129,6 +132,7 @@ export class OffersController {
     };
   }
 
+  @Public()
   @Post('applicable')
   @ApiOperation({ summary: 'Get applicable offers for dates and room' })
   @ApiResponse({ status: 200, description: 'Applicable offers retrieved successfully' })
@@ -157,6 +161,7 @@ export class OffersController {
 
   // Without a limit this endpoint is a discount-code oracle: an attacker can
   // enumerate codes until one of them is live.
+  @Public()
   @Throttle({ default: { limit: 10, ttl: 60000 }, strict: { limit: 40, ttl: 900000 } })
   @Post('validate-code')
   @ApiOperation({ summary: 'Validate offer code' })

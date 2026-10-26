@@ -74,9 +74,19 @@ export interface CalendarStats {
   arrivals: number;
   departures: number;
   inHouse: number;
+  /**
+   * Rows, which at Asterias is apartments: one row, one apartment.
+   */
+  apartmentsTotal: number;
+  apartmentsFree: number;
+  apartmentsClosed: number;
+  /**
+   * Sellable units. The same as the apartment counts while every row holds one
+   * unit; a row with `totalRooms > 1` is a type with that many identical rooms
+   * behind it, and then these are the numbers that say what can still be sold.
+   */
   unitsTotal: number;
   unitsFree: number;
-  unitsClosed: number;
 }
 
 export interface CalendarGrid {

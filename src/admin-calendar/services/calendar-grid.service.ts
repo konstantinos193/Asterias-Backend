@@ -5,7 +5,9 @@ import {
   buildOccupancy,
   dayStart,
 } from '../../availability/availability-rules';
-import { availabilityRevision } from '../../availability/availability-revision';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { Counter, CounterDocument } from '../../models/counter.model';
 import { PricingService } from '../../pricing/pricing.service';
 import { CalendarBookingsRepository } from '../repositories/calendar-bookings.repository';
 import { CalendarClosuresRepository } from '../repositories/calendar-closures.repository';
@@ -16,6 +18,7 @@ import { CalendarGrid, CalendarReservation, CalendarRoom, CalendarStats, DayKey 
 @Injectable()
 export class CalendarGridService {
   constructor(
+    @InjectModel(Counter.name) private readonly counters: Model<CounterDocument>,
     private readonly rooms: CalendarRoomsRepository,
     private readonly bookings: CalendarBookingsRepository,
     private readonly closures: CalendarClosuresRepository,
@@ -29,6 +32,7 @@ export class CalendarGridService {
    * nights at all.
    */
   async getGrid(from: DayKey, days: number): Promise<CalendarGrid> {
+    const { revision } = await this.revision();
     const to = addDays(from, days);
     const start = dayStart(from);
     const end = dayStart(to);
@@ -76,7 +80,7 @@ export class CalendarGridService {
       from,
       to,
       dates: buildDates(from, days),
-      revision: availabilityRevision(),
+      revision,
       stats: buildStats(from, rooms, reservations),
       rooms,
       reservations,
@@ -86,8 +90,9 @@ export class CalendarGridService {
   }
 
   /** The counter the client polls to know the grid it holds is stale. */
-  revision(): { revision: number } {
-    return { revision: availabilityRevision() };
+  async revision(): Promise<{ revision: number }> {
+    const counter = await this.counters.findById('availability').lean();
+    return { revision: counter?.seq ?? 0 };
   }
 }
 
@@ -98,14 +103,19 @@ function buildStats(
 ): CalendarStats {
   const live = reservations.filter((r) => r.status !== 'CANCELLED');
 
+  // Both counts are reported: rows (apartments) and the units behind them. They
+  // are the same number until a row sells more than one identical room, and the
+  // panel shows whichever the property actually has.
+  let apartmentsFree = 0;
+  let apartmentsClosed = 0;
   let unitsTotal = 0;
   let unitsFree = 0;
-  let unitsClosed = 0;
   for (const room of rooms) {
     const night = room.nights.find((n) => n.date === date);
+    if ((night?.unitsFree ?? 0) > 0) apartmentsFree += 1;
+    if (night?.status === 'closed') apartmentsClosed += 1;
     unitsTotal += room.totalRooms;
     unitsFree += night?.unitsFree ?? 0;
-    if (night?.status === 'closed') unitsClosed += room.totalRooms;
   }
 
   return {
@@ -113,8 +123,10 @@ function buildStats(
     arrivals: live.filter((r) => r.checkIn === date).length,
     departures: live.filter((r) => r.checkOut === date).length,
     inHouse: live.filter((r) => r.checkIn <= date && r.checkOut > date).length,
+    apartmentsTotal: rooms.length,
+    apartmentsFree,
+    apartmentsClosed,
     unitsTotal,
     unitsFree,
-    unitsClosed,
   };
 }
