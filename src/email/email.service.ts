@@ -113,6 +113,19 @@ export class EmailService {
     }
   }
 
+  /**
+   * The address we are allowed to put in From: whichever account the
+   * transporter actually authenticated as, in the same priority order as
+   * initializeTransporter().
+   */
+  private senderAddress(): string {
+    return (
+      this.configService.get<string>('SMTP_USER') ||
+      this.configService.get<string>('EMAIL_USER') ||
+      'asterias.apartments.koronisia@gmail.com'
+    );
+  }
+
   private detectLanguage(data: EmailData, request?: any): string {
     // Priority order for language detection:
     // 1. Explicit language from booking/user preference
@@ -159,15 +172,11 @@ export class EmailService {
         else if (this.configService.get('ADMIN_EMAIL')) {
           recipient = this.configService.get('ADMIN_EMAIL');
         }
-        // Priority 3: Use EMAIL_USER as fallback
-        else if (this.configService.get('EMAIL_USER')) {
-          recipient = this.configService.get('EMAIL_USER');
-          this.logger.warn('⚠️  ADMIN_EMAIL not set, using EMAIL_USER as fallback for admin notifications');
-        }
-        // Priority 4: Use hardcoded fallback
+        // Priority 3: fall back to the sending account, so an admin alert at
+        // least lands somewhere we can read instead of an address nobody owns.
         else {
-          recipient = 'asterias.apartments.koronisia@gmail.com';
-          this.logger.warn('⚠️  No admin email configured, using hardcoded fallback for admin notifications');
+          recipient = this.senderAddress();
+          this.logger.warn(`⚠️  ADMIN_EMAIL not set, sending admin notifications to ${recipient}`);
         }
       } else {
         recipient = data.guestEmail || options.to;
@@ -601,7 +610,11 @@ Automated admin notification from Asterias Homes
       }
 
       const mailOptions = {
-        from: `"Asterias Homes" <${this.configService.get('EMAIL_USER') || 'asterias.apartments.koronisia@gmail.com'}>`,
+        // Must be the account we authenticated as: Gmail refuses (or silently
+        // rewrites) a From it does not own, and production only sets SMTP_USER,
+        // so reading EMAIL_USER first fell through to a third address that
+        // belongs to nobody.
+        from: `"Asterias Homes" <${this.senderAddress()}>`,
         to: recipient,
         subject: template.subject(data, language),
         html: template.html(data, language),
@@ -649,6 +662,74 @@ Automated admin notification from Asterias Homes
     }
     
     return result;
+  }
+
+  /**
+   * Contact form submissions were only written to Mongo, so nobody was ever
+   * told one had arrived. Built inline rather than as a template because the
+   * i18n helper returns the key itself on a miss, and this always goes to us
+   * in Greek anyway.
+   */
+  async sendContactNotification(contact: {
+    name: string;
+    email: string;
+    phone?: string;
+    subject: string;
+    message: string;
+  }): Promise<EmailResult> {
+    if (!this.transporter) {
+      this.logger.warn(`Email transporter not initialized, contact form from ${contact.email} not forwarded`);
+      return { success: false, message: 'Transporter not initialized' };
+    }
+
+    const esc = (value: string) =>
+      (value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const recipient =
+      this.configService.get<string>('ADMIN_EMAIL') || this.senderAddress();
+
+    const row = (label: string, value: string) =>
+      `<tr><td style="padding:6px 12px;background:#f8f9fa;font-weight:bold">${esc(label)}</td>` +
+      `<td style="padding:6px 12px">${value}</td></tr>`;
+
+    try {
+      const result = await this.transporter.sendMail({
+        from: `"Asterias Homes" <${this.senderAddress()}>`,
+        to: recipient,
+        replyTo: contact.email || undefined,
+        subject: `[Επικοινωνία] ${contact.subject || 'Νέο μήνυμα'} — ${contact.name}`,
+        html: `
+          <div style="font-family:Arial,sans-serif;font-size:14px;color:#333">
+            <h2 style="font-size:17px">Νέο μήνυμα από τη φόρμα επικοινωνίας</h2>
+            <table cellspacing="0" style="border-collapse:collapse;font-size:14px">
+              ${row('Όνομα', esc(contact.name))}
+              ${row('Email', `<a href="mailto:${esc(contact.email)}">${esc(contact.email)}</a>`)}
+              ${contact.phone ? row('Τηλέφωνο', `<a href="tel:${esc(contact.phone)}">${esc(contact.phone)}</a>`) : ''}
+              ${row('Θέμα', esc(contact.subject))}
+            </table>
+            <p style="margin-top:16px"><strong>Μήνυμα:</strong></p>
+            <p style="white-space:pre-wrap">${esc(contact.message)}</p>
+          </div>`,
+        text:
+          `Νέο μήνυμα από τη φόρμα επικοινωνίας\n\n` +
+          `Όνομα: ${contact.name}\nEmail: ${contact.email}\n` +
+          (contact.phone ? `Τηλέφωνο: ${contact.phone}\n` : '') +
+          `Θέμα: ${contact.subject}\n\n${contact.message}\n`,
+      });
+
+      if (result.rejected?.length) {
+        this.logger.error(`Contact notification rejected for: ${result.rejected.join(', ')}`);
+      }
+      this.logger.log(`Contact form from ${contact.email} forwarded to ${recipient}`);
+      return { success: true, messageId: result.messageId };
+    } catch (error: any) {
+      this.logger.error(`Failed to forward contact form from ${contact.email}: ${error.message}`);
+      return { success: false, error: error.message };
+    }
   }
 
   async sendCheckoutThankYou(data: EmailData, options: { language?: string; request?: any } = {}): Promise<EmailResult> {

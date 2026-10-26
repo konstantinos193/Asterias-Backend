@@ -63,11 +63,18 @@ export class ScheduledTasksService {
     const from = new Date(now.getTime() - 28 * 60 * 60 * 1000);
     const to   = new Date(now.getTime() - 20 * 60 * 60 * 1000);
 
+    // Requiring CHECKED_OUT meant this never fired: the status only changes
+    // when someone presses check-out in the admin, which nobody does, so a
+    // booking sits at CONFIRMED and the guest is never asked for a review.
+    // The checkOut date passing is the real signal — only a cancellation
+    // should stop it.
     const bookings = await this.bookingModel
       .find({
-        bookingStatus: 'CHECKED_OUT',
+        bookingStatus: { $in: ['CONFIRMED', 'CHECKED_IN', 'CHECKED_OUT'] },
         postCheckoutEmailSent: { $ne: true },
         checkOut: { $gte: from, $lte: to },
+        // A walk-in written down without an address has nobody to thank.
+        'guestInfo.email': { $nin: [null, ''] },
       })
       .populate('roomId', 'name')
       .exec();
@@ -155,7 +162,9 @@ export class ScheduledTasksService {
           $lt: new Date(new Date(reminderTime.toDateString()).getTime() + 24 * 60 * 60 * 1000)
         },
         bookingStatus: 'CONFIRMED',
-        reminderSent: { $ne: true }
+        reminderSent: { $ne: true },
+        // Same as the post-checkout mail: no address, no reminder.
+        'guestInfo.email': { $nin: [null, ''] },
       }).lean();
 
       this.logger.log(`Found ${bookings.length} bookings needing reminders`);

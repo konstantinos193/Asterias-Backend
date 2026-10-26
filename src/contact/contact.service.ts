@@ -3,12 +3,14 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Contact, ContactDocument, ContactModel } from '../models/contact.model';
 import { User, UserDocument } from '../models/user.model';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class ContactService {
   constructor(
     @InjectModel(Contact.name) private contactModel: ContactModel,
-    @InjectModel(User.name) private userModel: Model<UserDocument>
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private readonly emailService: EmailService
   ) {}
 
   /**
@@ -23,6 +25,11 @@ export class ContactService {
   }) {
     const contact = new this.contactModel(contactData);
     await contact.save();
+
+    // Storing it is not telling anyone. Deliberately not awaited into the
+    // response path beyond this: the message is already saved, so a mail
+    // failure must not hand the visitor an error.
+    await this.emailService.sendContactNotification(contactData);
 
     return {
       message: 'Contact form submitted successfully',
